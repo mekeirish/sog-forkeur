@@ -12,10 +12,7 @@
         .log-container::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
         .log-container::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
     </style>
-
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#4b6cb7">
-<link rel="apple-touch-icon" href="icon.png"></head>
+</head>
 <body class="text-white font-sans min-h-screen flex items-center justify-center p-4">
 
     <div id="app" class="w-full max-w-2xl">
@@ -245,25 +242,22 @@
                     const passwordHash = await sha256(password);
                     log('🔐 Hash généré.', 'success');
 
-                    // 5. Configurer vendeurs.json (écrasement complet)
-                    const vendeurConfig = {
-                        [vendor]: {
-                            owner: TEMPLATE_OWNER,
-                            repo: newRepoName,
-                            passwordHash: passwordHash,
-                            settings: {
-                                title: `Boutique de ${vendor.charAt(0).toUpperCase() + vendor.slice(1)}`,
-                                currency: "DZD",
-                                ntfyTopic: `${vendor}_commandes`
-                            }
-                        }
-                    };
+                    // 5. Récupérer index.html depuis le template
+                    log('📄 Récupération de index.html depuis le template...', 'info');
+                    const indexUrl = `https://raw.githubusercontent.com/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/main/index.html`;
+                    const indexRes = await fetch(indexUrl);
+                    if (!indexRes.ok) throw new Error(`Impossible de récupérer index.html (${indexRes.status})`);
+                    let indexContent = await indexRes.text();
 
-                    const updateUrl =
-                    `${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/contents/vendeurs.json`;
-                    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(vendeurConfig, null, 2))));
+                    // 6. Remplacer les placeholders
+                    log('✏️ Injection des données du vendeur dans index.html...', 'info');
+                    indexContent = indexContent.replace(/\{\{VENDOR\}\}/g, vendor);
+                    indexContent = indexContent.replace(/\{\{PASSWORD_HASH\}\}/g, passwordHash);
 
-                    // Récupérer le SHA actuel (pour écraser)
+                    // 7. Pousser index.html modifié dans le nouveau dépôt
+                    const updateUrl = `${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/contents/index.html`;
+                    const encoded = btoa(unescape(encodeURIComponent(indexContent)));
+
                     let sha = null;
                     try {
                         const getRes = await fetch(updateUrl, {
@@ -272,18 +266,12 @@
                         if (getRes.ok) {
                             const data = await getRes.json();
                             sha = data.sha;
-                            log('📝 Fichier existant, mise à jour.', 'info');
-                        } else if (getRes.status === 404) {
-                            log('📝 Fichier introuvable, création.', 'warning');
-                        } else {
-                            throw new Error(`Erreur lecture (${getRes.status})`);
+                            log('📝 index.html existant, mise à jour.', 'info');
                         }
-                    } catch (e) {
-                        if (!e.message.includes('404')) throw e;
-                    }
+                    } catch (e) {}
 
                     const payload = {
-                        message: `Configuration du vendeur ${vendor}`,
+                        message: `Configuration de la boutique ${vendor}`,
                         content: encoded,
                         branch: "main"
                     };
@@ -299,7 +287,6 @@
                     });
 
                     if (putRes.status === 409) {
-                        // Conflit : on relit le SHA et on réessaie
                         log('⚠️ Conflit 409, relecture du SHA...', 'warning');
                         const getRes2 = await fetch(updateUrl, {
                             headers: { Authorization: `token ${token}` }
@@ -325,12 +312,12 @@
                         }
                     } else if (!putRes.ok) {
                         const err = await putRes.json();
-                        throw new Error(`Impossible de mettre à jour vendeurs.json (${putRes.status}): ${err.message}`);
+                        throw new Error(`Impossible de pousser index.html (${putRes.status}): ${err.message}`);
                     } else {
-                        log('✅ vendeurs.json configuré avec les données du vendeur.', 'success');
+                        log('✅ index.html configuré avec les données du vendeur.', 'success');
                     }
 
-                    // 6. Activer GitHub Pages
+                    // 8. Activer GitHub Pages
                     log(`🌐 Activation de GitHub Pages...`, 'info');
                     const pagesRes = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/pages`, {
                         method: "POST",
@@ -346,7 +333,7 @@
                     }
                     log('✅ GitHub Pages activé.', 'success');
 
-                    // 7. Résultat
+                    // 9. Résultat
                     const finalUrl = `https://${TEMPLATE_OWNER}.github.io/${newRepoName}/`;
                     log(`🎉 Boutique créée !`, 'success');
                     log(`🔗 ${finalUrl}`, 'success');
@@ -375,11 +362,9 @@
                 masterTokenInput.focus();
             }
 
-            console.log('🚀 SOG-Forkeur v3.0 (prêt) initialisé.');
+            console.log('🚀 SOG-Forkeur v3.0 (injection dans index.html) initialisé.');
         })();
     </script>
 
-
-<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));}</script>
 </body>
 </html>
