@@ -258,6 +258,7 @@
                     const updateUrl = `${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/contents/index.html`;
                     const encoded = btoa(unescape(encodeURIComponent(indexContent)));
 
+                    // Récupérer le SHA actuel (indispensable pour mettre à jour)
                     let sha = null;
                     try {
                         const getRes = await fetch(updateUrl, {
@@ -266,9 +267,15 @@
                         if (getRes.ok) {
                             const data = await getRes.json();
                             sha = data.sha;
-                            log('📝 index.html existant, mise à jour.', 'info');
+                            log('📝 index.html existant, mise à jour avec SHA.', 'info');
+                        } else if (getRes.status === 404) {
+                            log('📝 index.html introuvable, création.', 'warning');
+                        } else {
+                            throw new Error(`Erreur lecture (${getRes.status})`);
                         }
-                    } catch (e) {}
+                    } catch (e) {
+                        if (!e.message.includes('404')) throw e;
+                    }
 
                     const payload = {
                         message: `Configuration de la boutique ${vendor}`,
@@ -286,6 +293,7 @@
                         body: JSON.stringify(payload)
                     });
 
+                    // Gestion des conflits 409 (SHA obsolète)
                     if (putRes.status === 409) {
                         log('⚠️ Conflit 409, relecture du SHA...', 'warning');
                         const getRes2 = await fetch(updateUrl, {
@@ -362,7 +370,7 @@
                 masterTokenInput.focus();
             }
 
-            console.log('🚀 SOG-Forkeur v3.0 (injection dans index.html) initialisé.');
+            console.log('🚀 SOG-Forkeur v3.0 (corrigé) initialisé.');
         })();
     </script>
 
