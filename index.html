@@ -11,11 +11,26 @@
         .log-container::-webkit-scrollbar { width: 6px; }
         .log-container::-webkit-scrollbar-track { background: #1e293b; border-radius: 4px; }
         .log-container::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        .log-container::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .btn-update {
+            background: #7c3aed;
+            color: white;
+            transition: all 0.2s;
+        }
+        .btn-update:hover {
+            background: #6d28d9;
+            transform: scale(1.02);
+        }
+        .btn-update:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
     </style>
 </head>
 <body class="text-white font-sans min-h-screen flex items-center justify-center p-4">
 
-    <div id="app" class="w-full max-w-2xl">
+    <div id="app" class="w-full max-w-3xl">
 
         <div class="bg-slate-900/95 border border-cyan-500/30 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-cyan-500/20">
 
@@ -23,46 +38,64 @@
                 🏗️ SOG - Forkeur
             </h1>
             <p class="text-slate-400 text-center text-sm mb-6">
-                Créez une boutique en quelques secondes.
+                Créez une boutique ou mettez à jour toutes les boutiques existantes.
             </p>
 
-            <!-- Formulaire -->
-            <div class="space-y-4">
+            <!-- ---- SECTION CRÉATION ---- -->
+            <div class="border-b border-slate-700/50 pb-6 mb-6">
+                <h2 class="text-lg font-semibold text-cyan-300 mb-4">📦 Créer une nouvelle boutique</h2>
 
-                <!-- Token maître -->
-                <div>
-                    <label class="block text-sm font-mono text-slate-400 mb-1">🔐 Token maître GitHub</label>
-                    <div class="flex gap-2">
-                        <input type="password" id="masterToken" placeholder="Votre token GitHub (avec droits de création)"
-                        class="flex-1 bg-slate-800/70 border border-slate-700/80 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-cyan-500/50 outline-none" />
-                        <button id="toggleTokenBtn" class="bg-slate-700/60 hover:bg-slate-600/60 px-3 rounded-lg border border-slate-600/50 transition text-sm">
-                            👁️
-                        </button>
+                <div class="space-y-4">
+
+                    <!-- Token maître -->
+                    <div>
+                        <label class="block text-sm font-mono text-slate-400 mb-1">🔐 Token maître GitHub</label>
+                        <div class="flex gap-2">
+                            <input type="password" id="masterToken" placeholder="Votre token GitHub (avec droits de création)"
+                            class="flex-1 bg-slate-800/70 border border-slate-700/80 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-cyan-500/50 outline-none" />
+                            <button id="toggleTokenBtn" class="bg-slate-700/60 hover:bg-slate-600/60 px-3 rounded-lg border border-slate-600/50 transition text-sm">
+                                👁️
+                            </button>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-1">Le token est stocké dans votre navigateur (localStorage).</p>
                     </div>
-                    <p class="text-xs text-slate-500 mt-1">Le token est stocké dans votre navigateur (localStorage).</p>
-                </div>
 
-                <!-- Nom du vendeur -->
-                <div>
-                    <label class="block text-sm font-mono text-slate-400 mb-1">Nom du vendeur</label>
-                    <input type="text" id="vendorName" placeholder="ex: tartiza"
-                    class="w-full bg-slate-800/70 border border-slate-700/80 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-cyan-500/50 outline-none" />
-                    <p class="text-xs text-slate-500 mt-1">Le dépôt sera : <span class="text-cyan-400">hanout-[nom]</span></p>
-                </div>
+                    <!-- Nom du vendeur -->
+                    <div>
+                        <label class="block text-sm font-mono text-slate-400 mb-1">Nom du vendeur</label>
+                        <input type="text" id="vendorName" placeholder="ex: tartiza"
+                        class="w-full bg-slate-800/70 border border-slate-700/80 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-cyan-500/50 outline-none" />
+                        <p class="text-xs text-slate-500 mt-1">Le dépôt sera : <span class="text-cyan-400">hanout-[nom]</span></p>
+                    </div>
 
-                <!-- Mot de passe admin -->
-                <div>
-                    <label class="block text-sm font-mono text-slate-400 mb-1">Mot de passe admin</label>
-                    <input type="password" id="adminPassword" placeholder="Choisissez un mot de passe"
-                    class="w-full bg-slate-800/70 border border-slate-700/80 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-cyan-500/50 outline-none" />
-                    <p class="text-xs text-slate-500 mt-1">Le vendeur utilisera ce mot de passe pour accéder à l'admin.</p>
-                </div>
+                    <!-- Mot de passe admin -->
+                    <div>
+                        <label class="block text-sm font-mono text-slate-400 mb-1">Mot de passe admin</label>
+                        <input type="password" id="adminPassword" placeholder="Choisissez un mot de passe"
+                        class="w-full bg-slate-800/70 border border-slate-700/80 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:ring-2 focus:ring-cyan-500/50 outline-none" />
+                        <p class="text-xs text-slate-500 mt-1">Le vendeur utilisera ce mot de passe pour accéder à l'admin.</p>
+                    </div>
 
-                <!-- Bouton -->
-                <button id="createBtn"
-                class="w-full bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-bold py-3 rounded-xl transition shadow-lg shadow-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
-                    🏗️ Créer la boutique
+                    <!-- Bouton Créer -->
+                    <button id="createBtn"
+                    class="w-full bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-bold py-3 rounded-xl transition shadow-lg shadow-cyan-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
+                        🏗️ Créer la boutique
+                    </button>
+                </div>
+            </div>
+
+            <!-- ---- SECTION MISE À JOUR ---- -->
+            <div>
+                <h2 class="text-lg font-semibold text-yellow-300 mb-4">🔄 Mettre à jour toutes les boutiques existantes</h2>
+                <p class="text-sm text-slate-400 mb-4">
+                    Cette opération va mettre à jour <span class="text-yellow-300">toutes les boutiques</span> déjà créées 
+                    avec la dernière version du template. Les données des vendeurs (<span class="text-cyan-300">don.json</span>) ne sont pas touchées.
+                </p>
+                <button id="updateAllBtn"
+                class="w-full btn-update font-bold py-3 rounded-xl transition shadow-lg shadow-purple-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
+                    🔄 Mettre à jour toutes les boutiques
                 </button>
+                <div id="updateProgress" class="mt-3 text-xs text-slate-400 hidden"></div>
             </div>
 
             <!-- Logs -->
@@ -75,7 +108,7 @@
         </div>
 
         <div class="text-center text-xs text-slate-600 mt-6 font-mono">
-            SOG-Forkeur v3.0 · <span class="text-cyan-500/40">🔒 Dépôt privé</span>
+            SOG-Forkeur v4.0 · <span class="text-cyan-500/40">🔒 Dépôt privé</span>
         </div>
 
     </div>
@@ -90,6 +123,8 @@
             const vendorName = document.getElementById('vendorName');
             const adminPassword = document.getElementById('adminPassword');
             const createBtn = document.getElementById('createBtn');
+            const updateAllBtn = document.getElementById('updateAllBtn');
+            const updateProgress = document.getElementById('updateProgress');
             const logContainer = document.getElementById('logContainer');
             const logContent = document.getElementById('logContent');
             const resultMessage = document.getElementById('resultMessage');
@@ -140,85 +175,89 @@
                 return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
             }
 
-            // ---- Attente que le dépôt soit initialisé ET que index.html soit présent ----
+            function getToken() {
+                return masterTokenInput.value.trim() || localStorage.getItem("master_token");
+            }
+
+            // ---- Attente que le dépôt soit prêt ----
             async function waitForRepoReady(owner, repo, token, maxAttempts = 30) {
                 for (let i = 0; i < maxAttempts; i++) {
                     try {
-                        // Vérifier si le dépôt est accessible
                         const repoCheck = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
                             headers: { Authorization: `token ${token}` }
                         });
                         if (!repoCheck.ok) {
-                            log(`⏳ Dépôt pas encore accessible... (${i+1}/${maxAttempts})`, 'warning');
                             await new Promise(r => setTimeout(r, 3000));
                             continue;
                         }
-
-                        // Vérifier si index.html existe
                         const indexCheck = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/contents/index.html`, {
                             headers: { Authorization: `token ${token}` }
                         });
-                        if (indexCheck.ok) {
-                            log('✅ index.html présent.', 'success');
-                            return true;
-                        } else if (indexCheck.status === 404) {
-                            log(`⏳ index.html pas encore créé... (${i+1}/${maxAttempts})`, 'warning');
-                        } else {
-                            log(`⚠️ Erreur inattendue (${indexCheck.status})`, 'warning');
-                        }
-                    } catch (e) {
-                        log(`⏳ Erreur de connexion... (${i+1}/${maxAttempts})`, 'warning');
-                    }
+                        if (indexCheck.ok) return true;
+                    } catch (e) {}
                     await new Promise(r => setTimeout(r, 3000));
                 }
-                throw new Error(`Le dépôt ${repo} n'est pas prêt après ${maxAttempts} tentatives.`);
+                throw new Error(`Le dépôt ${repo} n'est pas prêt.`);
             }
 
-            // ---- Fonction principale ----
+            // ---- Pousser un fichier dans un dépôt ----
+            async function pushFile(owner, repo, path, content, token, message = "Mise à jour") {
+                const url = `${GITHUB_API}/repos/${owner}/${repo}/contents/${path}`;
+                const encoded = btoa(unescape(encodeURIComponent(content)));
+                let sha = null;
+                try {
+                    const getRes = await fetch(url, { headers: { Authorization: `token ${token}` } });
+                    if (getRes.ok) { const d = await getRes.json(); sha = d.sha; }
+                } catch (e) {}
+                const payload = { message, content: encoded, branch: "main" };
+                if (sha) payload.sha = sha;
+                const putRes = await fetch(url, {
+                    method: "PUT",
+                    headers: { Authorization: `token ${token}`, "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!putRes.ok) {
+                    const err = await putRes.json();
+                    throw new Error(`Erreur (${putRes.status}): ${err.message}`);
+                }
+                return putRes.json();
+            }
+
+            // ---- Fonction principale : création ----
             async function createHanout() {
-                // Réinitialisation
                 logContent.innerHTML = '';
                 logContainer.classList.add('hidden');
                 resultMessage.classList.add('hidden');
                 createBtn.disabled = true;
                 createBtn.textContent = '⏳ Création...';
 
-                const token = masterTokenInput.value.trim();
+                const token = getToken();
                 const vendor = vendorName.value.trim().toLowerCase();
                 const password = adminPassword.value.trim();
 
-                // Validation
-                if (!token) {
-                    log('❌ Token maître requis.', 'error');
+                if (!token) { log('❌ Token maître requis.', 'error');
                     showResult('Token requis.', 'error');
                     createBtn.disabled = false;
                     createBtn.textContent = '🏗️ Créer';
-                    return;
-                }
-                if (!vendor || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(vendor)) {
-                    log('❌ Nom de vendeur invalide.', 'error');
+                    return; }
+                if (!vendor || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(vendor)) { log('❌ Nom de vendeur invalide.',
+                        'error');
                     showResult('Nom invalide.', 'error');
                     createBtn.disabled = false;
                     createBtn.textContent = '🏗️ Créer';
-                    return;
-                }
-                if (password.length < 4) {
-                    log('❌ Mot de passe trop court (min 4).', 'error');
+                    return; }
+                if (password.length < 4) { log('❌ Mot de passe trop court.', 'error');
                     showResult('Mot de passe trop court.', 'error');
                     createBtn.disabled = false;
                     createBtn.textContent = '🏗️ Créer';
-                    return;
-                }
+                    return; }
 
-                // Sauvegarder le token dans localStorage
                 localStorage.setItem("master_token", token);
-
                 const newRepoName = `hanout-${vendor}`;
                 log(`🚀 Création de "${newRepoName}"...`, 'info');
 
                 try {
-                    // 1. Vérifier le template
-                    log(`🔍 Vérification du template ${TEMPLATE_OWNER}/${TEMPLATE_REPO}...`, 'info');
+                    // Vérifier le template
                     const templateCheck = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}`, {
                         headers: { Authorization: `token ${token}` }
                     });
@@ -227,122 +266,57 @@
                     if (!templateData.is_template) throw new Error(`Le template n'est pas marqué comme template.`);
                     log('✅ Template trouvé.', 'success');
 
-                    // 2. Vérifier si le dépôt existe déjà
-                    log(`🔎 Vérification de l'existence de ${newRepoName}...`, 'info');
+                    // Créer le dépôt
                     const existingCheck = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}`, {
                         headers: { Authorization: `token ${token}` }
                     });
-                    if (existingCheck.ok) {
-                        log(`⚠️ Le dépôt ${newRepoName} existe déjà. On continue...`, 'warning');
-                    } else {
-                        // 3. Créer le dépôt via l'API /generate
-                        log(`📦 Création de ${newRepoName} à partir du template...`, 'info');
-                        const generatePayload = {
-                            name: newRepoName,
-                            description: `Boutique ${vendor} - Hanout`,
-                            private: false,
-                            include_all_branches: false
-                        };
+                    if (!existingCheck.ok) {
                         const generateRes = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/generate`, {
                             method: 'POST',
                             headers: {
                                 Authorization: `token ${token}`,
                                 'Content-Type': 'application/json'
                             },
-                            body: JSON.stringify(generatePayload)
+                            body: JSON.stringify({
+                                name: newRepoName,
+                                description: `Boutique ${vendor}`,
+                                private: false,
+                                include_all_branches: false
+                            })
                         });
                         if (!generateRes.ok) {
-                            const errData = await generateRes.json();
-                            throw new Error(`Erreur création (${generateRes.status}): ${errData.message}`);
+                            const err = await generateRes.json();
+                            throw new Error(`Erreur création (${generateRes.status}): ${err.message}`);
                         }
-                        log('✅ Dépôt créé avec succès.', 'success');
+                        log('✅ Dépôt créé.', 'success');
+                    } else {
+                        log('⚠️ Le dépôt existe déjà.', 'warning');
                     }
 
-                    // 4. Attendre que le dépôt soit prêt ET que index.html soit présent
+                    // Attendre
                     await waitForRepoReady(TEMPLATE_OWNER, newRepoName, token);
 
-                    // 5. Hash du mot de passe
+                    // Hash du mot de passe
                     const passwordHash = await sha256(password);
                     log('🔐 Hash généré.', 'success');
 
-                    // 6. Récupérer index.html depuis le template
-                    log('📄 Récupération de index.html depuis le template...', 'info');
-                    const indexUrl = `https://raw.githubusercontent.com/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/main/index.html`;
+                    // Récupérer index.html du template
+                    const indexUrl =
+                        `https://raw.githubusercontent.com/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/main/index.html`;
                     const indexRes = await fetch(indexUrl);
                     if (!indexRes.ok) throw new Error(`Impossible de récupérer index.html (${indexRes.status})`);
                     let indexContent = await indexRes.text();
 
-                    // 7. Remplacer les placeholders
-                    log('✏️ Injection des données du vendeur dans index.html...', 'info');
+                    // Injecter les données
                     indexContent = indexContent.replace(/\{\{VENDOR\}\}/g, vendor);
                     indexContent = indexContent.replace(/\{\{PASSWORD_HASH\}\}/g, passwordHash);
 
-                    // 8. Pousser index.html modifié dans le nouveau dépôt
-                    const updateUrl = `${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/contents/index.html`;
-                    const encoded = btoa(unescape(encodeURIComponent(indexContent)));
+                    // Pousser index.html
+                    await pushFile(TEMPLATE_OWNER, newRepoName, "index.html", indexContent, token,
+                        `Configuration de la boutique ${vendor}`);
+                    log('✅ index.html configuré.', 'success');
 
-                    // Récupérer le SHA actuel
-                    let sha = null;
-                    try {
-                        const getRes = await fetch(updateUrl, {
-                            headers: { Authorization: `token ${token}` }
-                        });
-                        if (getRes.ok) {
-                            const data = await getRes.json();
-                            sha = data.sha;
-                            log('📝 index.html existant, mise à jour avec SHA.', 'info');
-                        }
-                    } catch (e) {}
-
-                    const payload = {
-                        message: `Configuration de la boutique ${vendor}`,
-                        content: encoded,
-                        branch: "main"
-                    };
-                    if (sha) payload.sha = sha;
-
-                    const putRes = await fetch(updateUrl, {
-                        method: "PUT",
-                        headers: {
-                            Authorization: `token ${token}`,
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (putRes.status === 409) {
-                        log('⚠️ Conflit 409, relecture du SHA...', 'warning');
-                        const getRes2 = await fetch(updateUrl, {
-                            headers: { Authorization: `token ${token}` }
-                        });
-                        if (getRes2.ok) {
-                            const data2 = await getRes2.json();
-                            payload.sha = data2.sha;
-                            const putRes2 = await fetch(updateUrl, {
-                                method: "PUT",
-                                headers: {
-                                    Authorization: `token ${token}`,
-                                    "Content-Type": "application/json"
-                                },
-                                body: JSON.stringify(payload)
-                            });
-                            if (!putRes2.ok) {
-                                const err2 = await putRes2.json();
-                                throw new Error(`Échec après conflit (${putRes2.status}): ${err2.message}`);
-                            }
-                            log('✅ Mise à jour réussie après conflit.', 'success');
-                        } else {
-                            throw new Error(`Impossible de relire le SHA (${getRes2.status})`);
-                        }
-                    } else if (!putRes.ok) {
-                        const err = await putRes.json();
-                        throw new Error(`Impossible de pousser index.html (${putRes.status}): ${err.message}`);
-                    } else {
-                        log('✅ index.html configuré avec les données du vendeur.', 'success');
-                    }
-
-                    // 9. Activer GitHub Pages
-                    log(`🌐 Activation de GitHub Pages...`, 'info');
+                    // Activer GitHub Pages
                     const pagesRes = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/pages`, {
                         method: "POST",
                         headers: {
@@ -357,12 +331,10 @@
                     }
                     log('✅ GitHub Pages activé.', 'success');
 
-                    // 10. Résultat
                     const finalUrl = `https://${TEMPLATE_OWNER}.github.io/${newRepoName}/`;
-                    log(`🎉 Boutique créée avec succès !`, 'success');
+                    log(`🎉 Boutique créée !`, 'success');
                     log(`🔗 ${finalUrl}`, 'success');
                     log(`🔑 Mot de passe admin : ${password}`, 'warning');
-
                     showResult(`✅ Boutique créée !\n🔗 ${finalUrl}\n🔑 ${password}`, 'success');
 
                 } catch (error) {
@@ -374,8 +346,117 @@
                 }
             }
 
+            // ---- Fonction : mettre à jour toutes les boutiques ----
+            async function updateAllVendors() {
+                logContent.innerHTML = '';
+                logContainer.classList.add('hidden');
+                resultMessage.classList.add('hidden');
+                updateProgress.classList.add('hidden');
+                updateAllBtn.disabled = true;
+                updateAllBtn.textContent = '⏳ Recherche des boutiques...';
+
+                const token = getToken();
+                if (!token) {
+                    log('❌ Token maître requis.', 'error');
+                    showResult('Token requis.', 'error');
+                    updateAllBtn.disabled = false;
+                    updateAllBtn.textContent = '🔄 Mettre à jour toutes les boutiques';
+                    return;
+                }
+
+                try {
+                    // 1. Récupérer la liste des dépôts hanout-*
+                    log('🔍 Recherche des boutiques existantes...', 'info');
+                    const reposRes = await fetch(`${GITHUB_API}/users/${TEMPLATE_OWNER}/repos?per_page=100`, {
+                        headers: { Authorization: `token ${token}` }
+                    });
+                    if (!reposRes.ok) throw new Error(`Impossible de récupérer les dépôts (${reposRes.status})`);
+                    const repos = await reposRes.json();
+                    const hanoutRepos = repos.filter(r => r.name.startsWith('hanout-'));
+
+                    if (hanoutRepos.length === 0) {
+                        log('⚠️ Aucune boutique trouvée.', 'warning');
+                        showResult('Aucune boutique à mettre à jour.', 'warning');
+                        updateAllBtn.disabled = false;
+                        updateAllBtn.textContent = '🔄 Mettre à jour toutes les boutiques';
+                        return;
+                    }
+
+                    log(`📦 ${hanoutRepos.length} boutique(s) trouvée(s).`, 'info');
+
+                    // 2. Récupérer le nouveau template
+                    log('📄 Récupération du nouveau template...', 'info');
+                    const templateRes = await fetch(
+                        `https://raw.githubusercontent.com/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/main/index.html`);
+                    if (!templateRes.ok) throw new Error(`Impossible de récupérer le template (${templateRes.status})`);
+                    const templateContent = await templateRes.text();
+
+                    // 3. Mettre à jour chaque boutique
+                    let updatedCount = 0;
+                    let errorCount = 0;
+                    updateProgress.classList.remove('hidden');
+
+                    for (let i = 0; i < hanoutRepos.length; i++) {
+                        const repo = hanoutRepos[i];
+                        const repoName = repo.name;
+                        updateProgress.textContent = `⏳ Mise à jour : ${i+1}/${hanoutRepos.length} (${repoName})`;
+
+                        try {
+                            // Récupérer l'index.html actuel
+                            const currentRes = await fetch(
+                                `https://raw.githubusercontent.com/${TEMPLATE_OWNER}/${repoName}/main/index.html`);
+                            if (!currentRes.ok) throw new Error(`Impossible de lire index.html (${currentRes.status})`);
+                            const currentContent = await currentRes.text();
+
+                            // Extraire VENDOR et PASSWORD_HASH
+                            const vendorMatch = currentContent.match(/const VENDOR = "([^"]+)";/);
+                            const hashMatch = currentContent.match(/const PASSWORD_HASH = "([^"]+)";/);
+
+                            if (!vendorMatch || !hashMatch) {
+                                throw new Error(`Impossible d'extraire les données de ${repoName}`);
+                            }
+
+                            const vendor = vendorMatch[1];
+                            const passwordHash = hashMatch[1];
+
+                            // Injecter dans le nouveau template
+                            let newContent = templateContent
+                                .replace(/\{\{VENDOR\}\}/g, vendor)
+                                .replace(/\{\{PASSWORD_HASH\}\}/g, passwordHash);
+
+                            // Pousser le fichier mis à jour
+                            await pushFile(TEMPLATE_OWNER, repoName, "index.html", newContent, token,
+                                `Mise à jour de la boutique ${vendor}`);
+                            updatedCount++;
+                            log(`✅ ${repoName} mis à jour.`, 'success');
+
+                        } catch (err) {
+                            errorCount++;
+                            log(`❌ ${repoName} : ${err.message}`, 'error');
+                        }
+                    }
+
+                    // 4. Résultat final
+                    updateProgress.textContent = '';
+                    updateProgress.classList.add('hidden');
+                    const finalMsg =
+                        `✅ ${updatedCount} boutique(s) mises à jour. ${errorCount > 0 ? `⚠️ ${errorCount} erreur(s).` : ''}`;
+                    log(finalMsg, errorCount > 0 ? 'warning' : 'success');
+                    showResult(finalMsg, errorCount > 0 ? 'warning' : 'success');
+
+                } catch (error) {
+                    log(`❌ Erreur : ${error.message}`, 'error');
+                    showResult(`❌ Échec : ${error.message}`, 'error');
+                } finally {
+                    updateAllBtn.disabled = false;
+                    updateAllBtn.textContent = '🔄 Mettre à jour toutes les boutiques';
+                }
+            }
+
             // ---- Événements ----
             createBtn.addEventListener('click', createHanout);
+            updateAllBtn.addEventListener('click', updateAllVendors);
+
             vendorName.addEventListener('keydown', (e) => { if (e.key === 'Enter') createBtn.click(); });
             adminPassword.addEventListener('keydown', (e) => { if (e.key === 'Enter') createBtn.click(); });
             masterTokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createBtn.click(); });
@@ -386,7 +467,7 @@
                 masterTokenInput.focus();
             }
 
-            console.log('🚀 SOG-Forkeur v3.0 (avec attente) initialisé.');
+            console.log('🚀 SOG-Forkeur v4.0 (avec mise à jour massive) initialisé.');
         })();
     </script>
 
