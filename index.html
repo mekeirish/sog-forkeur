@@ -140,20 +140,38 @@
                 return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
             }
 
-            async function waitForRepo(owner, repo, token, maxAttempts = 15) {
+            // ---- Attente que le dépôt soit initialisé ET que index.html soit présent ----
+            async function waitForRepoReady(owner, repo, token, maxAttempts = 30) {
                 for (let i = 0; i < maxAttempts; i++) {
                     try {
-                        const res = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
+                        // Vérifier si le dépôt est accessible
+                        const repoCheck = await fetch(`${GITHUB_API}/repos/${owner}/${repo}`, {
                             headers: { Authorization: `token ${token}` }
                         });
-                        if (res.ok) return true;
-                    } catch (e) {}
-                    if (i < maxAttempts - 1) {
-                        log(`⏳ Attente du dépôt... (${i+1}/${maxAttempts})`, 'warning');
-                        await new Promise(r => setTimeout(r, 2000));
+                        if (!repoCheck.ok) {
+                            log(`⏳ Dépôt pas encore accessible... (${i+1}/${maxAttempts})`, 'warning');
+                            await new Promise(r => setTimeout(r, 3000));
+                            continue;
+                        }
+
+                        // Vérifier si index.html existe
+                        const indexCheck = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/contents/index.html`, {
+                            headers: { Authorization: `token ${token}` }
+                        });
+                        if (indexCheck.ok) {
+                            log('✅ index.html présent.', 'success');
+                            return true;
+                        } else if (indexCheck.status === 404) {
+                            log(`⏳ index.html pas encore créé... (${i+1}/${maxAttempts})`, 'warning');
+                        } else {
+                            log(`⚠️ Erreur inattendue (${indexCheck.status})`, 'warning');
+                        }
+                    } catch (e) {
+                        log(`⏳ Erreur de connexion... (${i+1}/${maxAttempts})`, 'warning');
                     }
+                    await new Promise(r => setTimeout(r, 3000));
                 }
-                throw new Error(`Impossible d'accéder au dépôt ${repo}.`);
+                throw new Error(`Le dépôt ${repo} n'est pas prêt après ${maxAttempts} tentatives.`);
             }
 
             // ---- Fonction principale ----
@@ -200,6 +218,7 @@
 
                 try {
                     // 1. Vérifier le template
+                    log(`🔍 Vérification du template ${TEMPLATE_OWNER}/${TEMPLATE_REPO}...`, 'info');
                     const templateCheck = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}`, {
                         headers: { Authorization: `token ${token}` }
                     });
@@ -208,57 +227,61 @@
                     if (!templateData.is_template) throw new Error(`Le template n'est pas marqué comme template.`);
                     log('✅ Template trouvé.', 'success');
 
-                    // 2. Créer le dépôt
+                    // 2. Vérifier si le dépôt existe déjà
+                    log(`🔎 Vérification de l'existence de ${newRepoName}...`, 'info');
                     const existingCheck = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}`, {
                         headers: { Authorization: `token ${token}` }
                     });
-                    if (!existingCheck.ok) {
+                    if (existingCheck.ok) {
+                        log(`⚠️ Le dépôt ${newRepoName} existe déjà. On continue...`, 'warning');
+                    } else {
+                        // 3. Créer le dépôt via l'API /generate
+                        log(`📦 Création de ${newRepoName} à partir du template...`, 'info');
+                        const generatePayload = {
+                            name: newRepoName,
+                            description: `Boutique ${vendor} - Hanout`,
+                            private: false,
+                            include_all_branches: false
+                        };
                         const generateRes = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/generate`, {
                             method: 'POST',
                             headers: {
                                 Authorization: `token ${token}`,
                                 'Content-Type': 'application/json'
                             },
-                            body: JSON.stringify({
-                                name: newRepoName,
-                                description: `Boutique ${vendor}`,
-                                private: false,
-                                include_all_branches: false
-                            })
+                            body: JSON.stringify(generatePayload)
                         });
                         if (!generateRes.ok) {
-                            const err = await generateRes.json();
-                            throw new Error(`Erreur création (${generateRes.status}): ${err.message}`);
+                            const errData = await generateRes.json();
+                            throw new Error(`Erreur création (${generateRes.status}): ${errData.message}`);
                         }
-                        log('✅ Dépôt créé.', 'success');
-                    } else {
-                        log('⚠️ Le dépôt existe déjà.', 'warning');
+                        log('✅ Dépôt créé avec succès.', 'success');
                     }
 
-                    // 3. Attendre
-                    await waitForRepo(TEMPLATE_OWNER, newRepoName, token);
+                    // 4. Attendre que le dépôt soit prêt ET que index.html soit présent
+                    await waitForRepoReady(TEMPLATE_OWNER, newRepoName, token);
 
-                    // 4. Hash du mot de passe
+                    // 5. Hash du mot de passe
                     const passwordHash = await sha256(password);
                     log('🔐 Hash généré.', 'success');
 
-                    // 5. Récupérer index.html depuis le template
+                    // 6. Récupérer index.html depuis le template
                     log('📄 Récupération de index.html depuis le template...', 'info');
                     const indexUrl = `https://raw.githubusercontent.com/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/main/index.html`;
                     const indexRes = await fetch(indexUrl);
                     if (!indexRes.ok) throw new Error(`Impossible de récupérer index.html (${indexRes.status})`);
                     let indexContent = await indexRes.text();
 
-                    // 6. Remplacer les placeholders
+                    // 7. Remplacer les placeholders
                     log('✏️ Injection des données du vendeur dans index.html...', 'info');
                     indexContent = indexContent.replace(/\{\{VENDOR\}\}/g, vendor);
                     indexContent = indexContent.replace(/\{\{PASSWORD_HASH\}\}/g, passwordHash);
 
-                    // 7. Pousser index.html modifié dans le nouveau dépôt
+                    // 8. Pousser index.html modifié dans le nouveau dépôt
                     const updateUrl = `${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/contents/index.html`;
                     const encoded = btoa(unescape(encodeURIComponent(indexContent)));
 
-                    // Récupérer le SHA actuel (indispensable pour mettre à jour)
+                    // Récupérer le SHA actuel
                     let sha = null;
                     try {
                         const getRes = await fetch(updateUrl, {
@@ -268,14 +291,8 @@
                             const data = await getRes.json();
                             sha = data.sha;
                             log('📝 index.html existant, mise à jour avec SHA.', 'info');
-                        } else if (getRes.status === 404) {
-                            log('📝 index.html introuvable, création.', 'warning');
-                        } else {
-                            throw new Error(`Erreur lecture (${getRes.status})`);
                         }
-                    } catch (e) {
-                        if (!e.message.includes('404')) throw e;
-                    }
+                    } catch (e) {}
 
                     const payload = {
                         message: `Configuration de la boutique ${vendor}`,
@@ -293,7 +310,6 @@
                         body: JSON.stringify(payload)
                     });
 
-                    // Gestion des conflits 409 (SHA obsolète)
                     if (putRes.status === 409) {
                         log('⚠️ Conflit 409, relecture du SHA...', 'warning');
                         const getRes2 = await fetch(updateUrl, {
@@ -325,7 +341,7 @@
                         log('✅ index.html configuré avec les données du vendeur.', 'success');
                     }
 
-                    // 8. Activer GitHub Pages
+                    // 9. Activer GitHub Pages
                     log(`🌐 Activation de GitHub Pages...`, 'info');
                     const pagesRes = await fetch(`${GITHUB_API}/repos/${TEMPLATE_OWNER}/${newRepoName}/pages`, {
                         method: "POST",
@@ -341,9 +357,9 @@
                     }
                     log('✅ GitHub Pages activé.', 'success');
 
-                    // 9. Résultat
+                    // 10. Résultat
                     const finalUrl = `https://${TEMPLATE_OWNER}.github.io/${newRepoName}/`;
-                    log(`🎉 Boutique créée !`, 'success');
+                    log(`🎉 Boutique créée avec succès !`, 'success');
                     log(`🔗 ${finalUrl}`, 'success');
                     log(`🔑 Mot de passe admin : ${password}`, 'warning');
 
@@ -370,7 +386,7 @@
                 masterTokenInput.focus();
             }
 
-            console.log('🚀 SOG-Forkeur v3.0 (corrigé) initialisé.');
+            console.log('🚀 SOG-Forkeur v3.0 (avec attente) initialisé.');
         })();
     </script>
 
