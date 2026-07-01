@@ -92,7 +92,10 @@
       100% { transform: rotate(360deg); }
     }
   </style>
-</head>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4b6cb7">
+<link rel="apple-touch-icon" href="icon.png"></head>
 <body>
 <div id="root"></div>
 
@@ -684,5 +687,7 @@
   const root = ReactDOM.createRoot(container);
   root.render(<App />);
 </script>
+
+<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));}</script>
 </body>
 </html>
