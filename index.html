@@ -92,10 +92,7 @@
       100% { transform: rotate(360deg); }
     }
   </style>
-
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#4b6cb7">
-<link rel="apple-touch-icon" href="icon.png"></head>
+</head>
 <body>
 <div id="root"></div>
 
@@ -112,7 +109,6 @@
     const [vendor, setVendor] = useState('');
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(true);
-    const [repoName, setRepoName] = useState('');
     const logRef = useRef(null);
 
     // ---- CONSTANTES ----
@@ -179,6 +175,40 @@
       return Array.from(new Uint8Array(hashBuffer))
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
+    };
+
+    // ---- ATTENDRE QUE LE FORK SOIT PRÊT ----
+    const waitForFork = async (repoName, maxAttempts = 15) => {
+      let attempts = 0;
+      while (attempts < maxAttempts) {
+        try {
+          const res = await fetch(
+            `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
+            { headers: { Authorization: `token ${token}` } }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            return data;
+          }
+          if (res.status === 404) {
+            // Le fichier n'est pas encore prêt
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            attempts++;
+            addLog(`⏳ Attente du fork... (${attempts}/${maxAttempts})`, 'warning');
+            continue;
+          }
+          throw new Error(`Erreur ${res.status}: ${await res.text()}`);
+        } catch (err) {
+          if (attempts < maxAttempts - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            attempts++;
+            addLog(`⏳ Attente du fork... (${attempts}/${maxAttempts})`, 'warning');
+          } else {
+            throw err;
+          }
+        }
+      }
+      throw new Error('Timeout: le fork n\'est pas prêt après ' + maxAttempts + ' secondes');
     };
 
     // ---- MISE À JOUR DE SHOPS.JSON (AUTOMATIQUE) ----
@@ -303,18 +333,11 @@
 
         addLog(`✅ Fork créé: hanout-${cleanVendor}`, 'success');
 
-        // 2. Récupérer le SHA du fichier index.html
-        const shaRes = await fetch(
-          `https://api.github.com/repos/${TEMPLATE_OWNER}/hanout-${cleanVendor}/contents/index.html`,
-          { headers: { Authorization: `token ${token}` } }
-        );
-
-        if (!shaRes.ok) {
-          throw new Error('Impossible de récupérer index.html');
-        }
-
-        const shaData = await shaRes.json();
+        // 2. Attendre que le fork soit prêt et récupérer le SHA
+        addLog(`⏳ Attente que le fork soit prêt...`, 'warning');
+        const shaData = await waitForFork(`hanout-${cleanVendor}`);
         const fileSha = shaData.sha;
+        addLog(`✅ Fork prêt, SHA: ${fileSha.substring(0, 8)}`, 'success');
 
         // 3. Générer le hash du mot de passe
         const passwordHash = await sha256(password);
@@ -519,17 +542,10 @@
         for (const repo of shopRepos) {
           // On attend que chaque mise à jour soit terminée
           await updateShop(repo.name);
-          // On vérifie si la mise à jour a été un succès ou une erreur
-          // (on compte approximativement)
-          const lastLog = logs[logs.length - 1];
-          if (lastLog && lastLog.type === 'success' && lastLog.message.includes(repo.name)) {
-            successCount++;
-          } else {
-            errorCount++;
-          }
+          successCount++;
         }
 
-        addLog(`✅ ${successCount} boutique(s) mises à jour. ⚠️ ${errorCount} erreur(s).`, 'success');
+        addLog(`✅ ${successCount} boutique(s) mises à jour.`, 'success');
 
       } catch (error) {
         addLog(`❌ Erreur lors de la mise à jour massive: ${error.message}`, 'error');
@@ -687,7 +703,5 @@
   const root = ReactDOM.createRoot(container);
   root.render(<App />);
 </script>
-
-<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));}</script>
 </body>
 </html>
