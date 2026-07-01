@@ -97,7 +97,7 @@
 <div id="root"></div>
 
 <script type="text/babel">
-  const { useState, useEffect, useRef, useMemo } = React;
+  const { useState, useEffect, useRef } = React;
 
   function App() {
 
@@ -177,38 +177,125 @@
         .join('');
     };
 
-    // ---- ATTENDRE QUE LE FORK SOIT PRÊT ----
-    const waitForFork = async (repoName, maxAttempts = 15) => {
-      let attempts = 0;
-      while (attempts < maxAttempts) {
-        try {
-          const res = await fetch(
-            `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
-            { headers: { Authorization: `token ${token}` } }
-          );
-          if (res.ok) {
-            const data = await res.json();
-            return data;
-          }
-          if (res.status === 404) {
-            // Le fichier n'est pas encore prêt
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            attempts++;
-            addLog(`⏳ Attente du fork... (${attempts}/${maxAttempts})`, 'warning');
-            continue;
-          }
-          throw new Error(`Erreur ${res.status}: ${await res.text()}`);
-        } catch (err) {
-          if (attempts < maxAttempts - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            attempts++;
-            addLog(`⏳ Attente du fork... (${attempts}/${maxAttempts})`, 'warning');
-          } else {
-            throw err;
+    // ---- VÉRIFIER LES PERMISSIONS DU TOKEN ----
+    const checkTokenPermissions = async () => {
+      try {
+        const res = await fetch('https://api.github.com/user', {
+          headers: { Authorization: `token ${token}` }
+        });
+        if (!res.ok) throw new Error('Token invalide');
+        const user = await res.json();
+        addLog(`✅ Token valide pour ${user.login}`, 'success');
+        
+        const scopes = res.headers.get('X-OAuth-Scopes');
+        if (scopes) {
+          addLog(`🔑 Scopes: ${scopes}`, 'info');
+          if (!scopes.includes('repo') && !scopes.includes('public_repo')) {
+            addLog('⚠️ Le token n\'a pas les permissions "repo" ou "public_repo".', 'warning');
           }
         }
+        return true;
+      } catch (err) {
+        addLog(`❌ Erreur vérification token: ${err.message}`, 'error');
+        return false;
       }
-      throw new Error('Timeout: le fork n\'est pas prêt après ' + maxAttempts + ' secondes');
+    };
+
+    // ---- VÉRIFIER SI LE REPO EXISTE DÉJÀ ----
+    const checkRepoExists = async (repoName) => {
+      try {
+        const res = await fetch(
+          `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}`,
+          { headers: { Authorization: `token ${token}` } }
+        );
+        return res.status === 200;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    // ---- CRÉER LE REPO À PARTIR DU TEMPLATE (MÉTHODE GÉNÉRATEUR) ----
+    const createRepoFromTemplate = async (repoName) => {
+      const res = await fetch(`https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/generate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `token ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: JSON.stringify({
+          name: repoName,
+          owner: TEMPLATE_OWNER,
+          private: false,
+          include_all_branches: false
+        })
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        if (err.message && err.message.includes('already exists')) {
+          addLog(`⚠️ Le repo ${repoName} existe déjà`, 'warning');
+          return null;
+        }
+        throw new Error(`Création échouée: ${err.message}`);
+      }
+      return await res.json();
+    };
+
+    // ---- RÉCUPÉRER LE CONTENU D'UN FICHIER ----
+    const getFileContent = async (repoName, filePath) => {
+      try {
+        const res = await fetch(
+          `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/${filePath}`,
+          { headers: { Authorization: `token ${token}` } }
+        );
+        if (!res.ok) {
+          throw new Error(`Erreur ${res.status}: ${await res.text()}`);
+        }
+        return await res.json();
+      } catch (err) {
+        throw new Error(`Impossible de récupérer ${filePath}: ${err.message}`);
+      }
+    };
+
+    // ---- METTRE À JOUR UN FICHIER ----
+    const updateFile = async (repoName, filePath, content, message) => {
+      try {
+        let sha = null;
+        try {
+          const fileData = await getFileContent(repoName, filePath);
+          sha = fileData.sha;
+        } catch (e) {
+          // Le fichier n'existe pas, on va le créer
+        }
+        
+        const payload = {
+          message: message,
+          content: btoa(unescape(encodeURIComponent(content))),
+          branch: 'main'
+        };
+        if (sha) payload.sha = sha;
+        
+        const res = await fetch(
+          `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/${filePath}`,
+          {
+            method: 'PUT',
+            headers: {
+              Authorization: `token ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+        
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(`Erreur ${res.status}: ${err.message}`);
+        }
+        return await res.json();
+      } catch (err) {
+        throw new Error(`Impossible de mettre à jour ${filePath}: ${err.message}`);
+      }
     };
 
     // ---- MISE À JOUR DE SHOPS.JSON (AUTOMATIQUE) ----
@@ -312,70 +399,63 @@
 
       setIsProcessing(true);
       const cleanVendor = vendor.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+      const repoName = `hanout-${cleanVendor}`;
       
       try {
-        addLog(`🚀 Création de hanout-${cleanVendor}...`, 'info');
-        
-        // 1. Forker le template
-        const forkRes = await fetch(`https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/forks`, {
-          method: 'POST',
-          headers: {
-            Authorization: `token ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ name: `hanout-${cleanVendor}` })
-        });
-
-        if (!forkRes.ok) {
-          const err = await forkRes.json();
-          throw new Error(`Fork échoué: ${err.message}`);
+        // 0. Vérifier les permissions du token
+        addLog(`🔍 Vérification des permissions du token...`, 'info');
+        const hasPermissions = await checkTokenPermissions();
+        if (!hasPermissions) {
+          addLog('❌ Le token n\'a pas les permissions nécessaires', 'error');
+          setIsProcessing(false);
+          return;
         }
+        
+        // 1. Vérifier si le repo existe déjà
+        addLog(`🔍 Vérification si ${repoName} existe...`, 'info');
+        const exists = await checkRepoExists(repoName);
+        if (exists) {
+          addLog(`⚠️ ${repoName} existe déjà !`, 'warning');
+          setIsProcessing(false);
+          return;
+        }
+        
+        addLog(`🚀 Création de ${repoName} à partir du template...`, 'info');
+        
+        // 2. Créer le repo via generate
+        const repoData = await createRepoFromTemplate(repoName);
+        if (!repoData) {
+          // Le repo existe déjà (cas rare)
+          setIsProcessing(false);
+          return;
+        }
+        
+        addLog(`✅ Repo ${repoName} créé avec succès !`, 'success');
 
-        addLog(`✅ Fork créé: hanout-${cleanVendor}`, 'success');
+        // 3. Attendre que le repo soit accessible (quelques secondes)
+        addLog(`⏳ Attente que le repo soit disponible...`, 'warning');
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // 2. Attendre que le fork soit prêt et récupérer le SHA
-        addLog(`⏳ Attente que le fork soit prêt...`, 'warning');
-        const shaData = await waitForFork(`hanout-${cleanVendor}`);
-        const fileSha = shaData.sha;
-        addLog(`✅ Fork prêt, SHA: ${fileSha.substring(0, 8)}`, 'success');
-
-        // 3. Générer le hash du mot de passe
+        // 4. Récupérer le template pour index.html
+        addLog(`📄 Récupération du template...`, 'info');
+        const templateData = await getFileContent(TEMPLATE_REPO, 'index.html');
+        let templateContent = atob(templateData.content);
+        
+        // 5. Générer le hash du mot de passe
         const passwordHash = await sha256(password);
         addLog(`🔐 Hash du mot de passe généré`, 'info');
 
-        // 4. Lire le contenu actuel
-        const content = atob(shaData.content);
-        
-        // 5. Remplacer les variables
-        let newContent = content.replace(/{{VENDOR}}/g, cleanVendor);
+        // 6. Remplacer les variables
+        let newContent = templateContent.replace(/{{VENDOR}}/g, cleanVendor);
         newContent = newContent.replace(/{{PASSWORD_HASH}}/g, passwordHash);
 
-        // 6. Sauvegarder le fichier modifié
-        const updateRes = await fetch(
-          `https://api.github.com/repos/${TEMPLATE_OWNER}/hanout-${cleanVendor}/contents/index.html`,
-          {
-            method: 'PUT',
-            headers: {
-              Authorization: `token ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              message: `Initialisation de hanout-${cleanVendor}`,
-              content: btoa(unescape(encodeURIComponent(newContent))),
-              sha: fileSha,
-              branch: 'main'
-            })
-          }
-        );
+        // 7. Sauvegarder index.html
+        addLog(`💾 Sauvegarde de index.html...`, 'info');
+        await updateFile(repoName, 'index.html', newContent, `Initialisation de ${repoName}`);
+        addLog(`✅ index.html mis à jour`, 'success');
 
-        if (!updateRes.ok) {
-          const err = await updateRes.json();
-          throw new Error(`Échec mise à jour: ${err.message}`);
-        }
-
-        addLog(`✅ hanout-${cleanVendor} initialisé avec succès`, 'success');
-
-        // 7. Créer un don.json par défaut
+        // 8. Créer don.json par défaut
+        addLog(`📦 Création de don.json...`, 'info');
         const defaultData = {
           settings: {
             title: `Boutique de ${cleanVendor}`,
@@ -386,38 +466,22 @@
           categories: [],
           products: []
         };
-
-        const donRes = await fetch(
-          `https://api.github.com/repos/${TEMPLATE_OWNER}/hanout-${cleanVendor}/contents/don.json`,
-          {
-            method: 'PUT',
-            headers: {
-              Authorization: `token ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              message: `Ajout du catalogue ${cleanVendor}`,
-              content: btoa(unescape(encodeURIComponent(JSON.stringify(defaultData, null, 2)))),
-              branch: 'main'
-            })
-          }
+        await updateFile(
+          repoName,
+          'don.json',
+          JSON.stringify(defaultData, null, 2),
+          `Ajout du catalogue ${cleanVendor}`
         );
+        addLog(`✅ don.json créé`, 'success');
 
-        if (!donRes.ok) {
-          const err = await donRes.json();
-          addLog(`⚠️ Erreur création don.json: ${err.message}`, 'warning');
-        } else {
-          addLog(`✅ don.json créé pour ${cleanVendor}`, 'success');
-        }
-
-        // 8. Mettre à jour shops.json (AUTOMATIQUE)
+        // 9. Mettre à jour shops.json (AUTOMATIQUE)
         await updateShopsJson(cleanVendor);
 
-        // 9. Rafraîchir la liste
-        loadShops(token);
+        // 10. Rafraîchir la liste
+        await loadShops(token);
         setVendor('');
         setPassword('');
-        addLog(`🎉 Boutique hanout-${cleanVendor} créée avec succès !`, 'success');
+        addLog(`🎉 Boutique ${repoName} créée avec succès !`, 'success');
 
       } catch (error) {
         addLog(`❌ Erreur: ${error.message}`, 'error');
@@ -450,9 +514,9 @@
         }
 
         const templateData = await templateRes.json();
-        const templateContent = atob(templateData.content);
+        let templateContent = atob(templateData.content);
 
-        // 2. Récupérer le fichier actuel de la boutique pour avoir le SHA
+        // 2. Récupérer le fichier actuel de la boutique
         const shopRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
           { headers: { Authorization: `token ${token}` } }
@@ -463,9 +527,8 @@
         }
 
         const shopData = await shopRes.json();
-        const shopSha = shopData.sha;
 
-        // 3. Récupérer les variables actuelles (VENDOR et PASSWORD_HASH)
+        // 3. Récupérer les variables actuelles
         const currentContent = atob(shopData.content);
         const vendorMatch = currentContent.match(/var VENDOR = "([^"]+)";/);
         const passMatch = currentContent.match(/var PASSWORD_HASH = "([^"]+)";/);
@@ -473,36 +536,15 @@
         const currentVendor = vendorMatch ? vendorMatch[1] : vendorName;
         const currentPass = passMatch ? passMatch[1] : '';
 
-        // 4. Remplacer les variables dans le nouveau template
+        // 4. Remplacer les variables
         let newContent = templateContent.replace(/{{VENDOR}}/g, currentVendor);
         newContent = newContent.replace(/{{PASSWORD_HASH}}/g, currentPass);
 
         // 5. Sauvegarder
-        const updateRes = await fetch(
-          `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
-          {
-            method: 'PUT',
-            headers: {
-              Authorization: `token ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              message: `Mise à jour de ${repoName}`,
-              content: btoa(unescape(encodeURIComponent(newContent))),
-              sha: shopSha,
-              branch: 'main'
-            })
-          }
-        );
-
-        if (!updateRes.ok) {
-          const err = await updateRes.json();
-          throw new Error(`Échec mise à jour: ${err.message}`);
-        }
-
+        await updateFile(repoName, 'index.html', newContent, `Mise à jour de ${repoName}`);
         addLog(`✅ ${repoName} mis à jour.`, 'success');
 
-        // 6. Vérifier/mettre à jour shops.json (AUTOMATIQUE)
+        // 6. Vérifier/mettre à jour shops.json
         await updateShopsJson(currentVendor);
 
       } catch (error) {
@@ -520,8 +562,6 @@
       }
 
       setIsProcessing(true);
-      let successCount = 0;
-      let errorCount = 0;
 
       try {
         const repos = await fetch('https://api.github.com/user/repos?per_page=100', {
@@ -539,8 +579,8 @@
 
         addLog(`📦 ${shopRepos.length} boutique(s) trouvée(s).`, 'info');
 
+        let successCount = 0;
         for (const repo of shopRepos) {
-          // On attend que chaque mise à jour soit terminée
           await updateShop(repo.name);
           successCount++;
         }
