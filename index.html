@@ -1,10 +1,12 @@
-<html lang="fr"><head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes" />
   <title>SOG-Forkeur - Gestion des boutiques</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script crossorigin="" src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin="" src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     .neu-card {
@@ -85,18 +87,9 @@
       animation: spin 1s linear infinite;
       display: inline-block;
     }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
-
-<link rel="manifest" href="./manifest.json">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#4b6cb7">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="apple-touch-icon" href="icon.png"></head>
+</head>
 <body>
 <div id="root"></div>
 
@@ -118,33 +111,6 @@
     // ---- CONSTANTES ----
     const TEMPLATE_OWNER = 'mekeirish';
     const TEMPLATE_REPO = 'hanout-template';
-
-    // ---- ENCODAGE UTF-8 POUR btoa ----
-    const utf8ToBase64 = (str) => {
-      try {
-        const utf8Bytes = new TextEncoder().encode(str);
-        const binaryString = String.fromCharCode(...utf8Bytes);
-        return btoa(binaryString);
-      } catch (e) {
-        // Fallback pour les anciens navigateurs
-        return btoa(unescape(encodeURIComponent(str)));
-      }
-    };
-
-    // ---- DÉCODAGE UTF-8 POUR atob ----
-    const base64ToUtf8 = (str) => {
-      try {
-        const binaryString = atob(str);
-        const bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        return new TextDecoder('utf-8').decode(bytes);
-      } catch (e) {
-        // Fallback pour les anciens navigateurs
-        return decodeURIComponent(escape(atob(str)));
-      }
-    };
 
     // ---- INIT ----
     useEffect(() => {
@@ -277,7 +243,6 @@
     const enableGitHubPages = async (repoName) => {
       try {
         addLog(`🌐 Activation de GitHub Pages pour ${repoName}...`, 'info');
-        
         const res = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/pages`,
           {
@@ -288,14 +253,10 @@
               'Accept': 'application/vnd.github.v3+json'
             },
             body: JSON.stringify({
-              source: {
-                branch: 'main',
-                path: '/'
-              }
+              source: { branch: 'main', path: '/' }
             })
           }
         );
-        
         if (res.status === 201 || res.status === 200) {
           addLog(`✅ GitHub Pages activé pour ${repoName}`, 'success');
           return true;
@@ -313,30 +274,51 @@
       }
     };
 
-    // ---- ATTENDRE QUE GITHUB PAGES SOIT PRÊT ----
-    const waitForPages = async (repoName, maxAttempts = 10) => {
+    // ---- ATTENDRE QUE GITHUB PAGES SOIT PRÊT (NOUVEAU) ----
+    const waitForPagesDeployment = async (repoName, maxAttempts = 25) => {
       let attempts = 0;
-      const url = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
-      
+      const pagesApiUrl = `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/pages`;
+      const siteUrl = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
+
+      addLog(`⏳ Vérification du déploiement Pages pour ${repoName}...`, 'warning');
+
       while (attempts < maxAttempts) {
         try {
-          addLog(`⏳ Vérification de la disponibilité... (${attempts + 1}/${maxAttempts})`, 'warning');
-          const res = await fetch(url, { method: 'HEAD' });
-          
-          if (res.status === 200) {
-            addLog(`✅ Site disponible !`, 'success');
+          // 1. Vérifier le statut via l'API Pages
+          const res = await fetch(pagesApiUrl, {
+            headers: { Authorization: `token ${token}` }
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === 'building' || data.status === 'pending') {
+              addLog(`⏳ Déploiement en cours... (${attempts + 1}/${maxAttempts})`, 'warning');
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              attempts++;
+              continue;
+            }
+          }
+
+          // 2. Vérifier si le site est accessible
+          const siteCheck = await fetch(siteUrl, { method: 'HEAD' });
+          if (siteCheck.status === 200) {
+            addLog(`✅ Site accessible : ${siteUrl}`, 'success');
             return true;
           }
-          
+
+          // 3. Si le site n'est pas encore prêt
+          addLog(`⏳ Site pas encore accessible... (${attempts + 1}/${maxAttempts})`, 'warning');
           await new Promise(resolve => setTimeout(resolve, 3000));
           attempts++;
+
         } catch (err) {
+          addLog(`⚠️ Erreur vérification: ${err.message}`, 'warning');
           await new Promise(resolve => setTimeout(resolve, 3000));
           attempts++;
         }
       }
-      
-      addLog(`⚠️ Le site n'est pas encore disponible, mais l'activation est lancée.`, 'warning');
+
+      addLog(`⚠️ Déploiement Pages non confirmé après ${maxAttempts} tentatives.`, 'warning');
       return false;
     };
 
@@ -356,24 +338,22 @@
       }
     };
 
-    // ---- METTRE À JOUR UN FICHIER (AVEC UTF-8) ----
+    // ---- METTRE À JOUR UN FICHIER ----
     const updateFile = async (repoName, filePath, content, message) => {
       try {
         let sha = null;
         try {
           const fileData = await getFileContent(repoName, filePath);
           sha = fileData.sha;
-        } catch (e) {
-          // Le fichier n'existe pas, on va le créer
-        }
-        
+        } catch (e) {}
+
         const payload = {
           message: message,
-          content: utf8ToBase64(content),
+          content: btoa(unescape(encodeURIComponent(content))),
           branch: 'main'
         };
         if (sha) payload.sha = sha;
-        
+
         const res = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/${filePath}`,
           {
@@ -385,7 +365,7 @@
             body: JSON.stringify(payload)
           }
         );
-        
+
         if (!res.ok) {
           const err = await res.json();
           throw new Error(`Erreur ${res.status}: ${err.message}`);
@@ -400,25 +380,18 @@
     const updateShopsJson = async (vendorName) => {
       try {
         addLog(`📝 Vérification de ${vendorName} dans shops.json...`, 'info');
-        
-        if (!token) {
-          addLog('❌ Token requis pour mettre à jour shops.json', 'error');
-          return false;
-        }
-        
         const shopsUrl = 'https://api.github.com/repos/mekeirish/sog/contents/shops.json';
         let shops = [];
         let sha = null;
-        
+
         try {
           const getRes = await fetch(shopsUrl, {
             headers: { Authorization: `token ${token}` }
           });
-          
           if (getRes.ok) {
             const data = await getRes.json();
             sha = data.sha;
-            const decoded = base64ToUtf8(data.content);
+            const decoded = atob(data.content);
             shops = JSON.parse(decoded);
             addLog(`📄 shops.json chargé (${shops.length} boutiques)`, 'info');
           } else if (getRes.status === 404) {
@@ -428,30 +401,29 @@
             throw new Error(`Erreur ${getRes.status}`);
           }
         } catch (e) {
-          addLog('📄 Création d\'un nouveau shops.json', 'warning');
           shops = [];
         }
-        
+
         const existing = shops.find(s => s.vendor === vendorName);
         if (existing) {
           addLog(`ℹ️ ${vendorName} déjà présent dans shops.json`, 'info');
           return true;
         }
-        
+
         shops.push({
           vendor: vendorName,
           name: vendorName.charAt(0).toUpperCase() + vendorName.slice(1),
           url: `https://${TEMPLATE_OWNER}.github.io/hanout-${vendorName}/`
         });
-        
-        const content = utf8ToBase64(JSON.stringify(shops, null, 2));
+
+        const content = btoa(unescape(encodeURIComponent(JSON.stringify(shops, null, 2))));
         const payload = {
           message: `✨ Ajout automatique de ${vendorName}`,
           content: content,
           branch: 'main'
         };
         if (sha) payload.sha = sha;
-        
+
         const putRes = await fetch(shopsUrl, {
           method: 'PUT',
           headers: {
@@ -460,22 +432,22 @@
           },
           body: JSON.stringify(payload)
         });
-        
+
         if (!putRes.ok) {
           const err = await putRes.json();
           throw new Error(`GitHub ${putRes.status}: ${err.message}`);
         }
-        
+
         addLog(`✅ ${vendorName} ajouté dans shops.json`, 'success');
         return true;
-        
+
       } catch (error) {
         addLog(`❌ Erreur mise à jour shops.json: ${error.message}`, 'error');
         return false;
       }
     };
 
-    // ---- CRÉATION D'UNE BOUTIQUE ----
+    // ---- CRÉATION D'UNE BOUTIQUE (AMÉLIORÉE) ----
     const createShop = async () => {
       if (!vendor.trim()) {
         addLog('❌ Veuillez entrer un nom de vendeur', 'error');
@@ -493,16 +465,15 @@
       setIsProcessing(true);
       const cleanVendor = vendor.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
       const repoName = `hanout-${cleanVendor}`;
-      
+
       try {
-        addLog(`🔍 Vérification des permissions du token...`, 'info');
         const hasPermissions = await checkTokenPermissions();
         if (!hasPermissions) {
           addLog('❌ Le token n\'a pas les permissions nécessaires', 'error');
           setIsProcessing(false);
           return;
         }
-        
+
         addLog(`🔍 Vérification si ${repoName} existe...`, 'info');
         const exists = await checkRepoExists(repoName);
         if (exists) {
@@ -510,23 +481,25 @@
           setIsProcessing(false);
           return;
         }
-        
+
         addLog(`🚀 Création de ${repoName} à partir du template...`, 'info');
         const repoData = await createRepoFromTemplate(repoName);
         if (!repoData) {
           setIsProcessing(false);
           return;
         }
-        
+
         addLog(`✅ Repo ${repoName} créé avec succès !`, 'success');
 
+        // Attendre un peu que le repo soit accessible
         addLog(`⏳ Attente que le repo soit disponible...`, 'warning');
         await new Promise(resolve => setTimeout(resolve, 3000));
 
+        // Récupérer le template
         addLog(`📄 Récupération du template...`, 'info');
         const templateData = await getFileContent(TEMPLATE_REPO, 'index.html');
-        let templateContent = base64ToUtf8(templateData.content);
-        
+        let templateContent = atob(templateData.content);
+
         const passwordHash = await sha256(password);
         addLog(`🔐 Hash du mot de passe généré`, 'info');
 
@@ -556,17 +529,25 @@
         );
         addLog(`✅ don.json créé`, 'success');
 
+        // Activer GitHub Pages
         await enableGitHubPages(repoName);
 
-        addLog(`⏳ Attente que le site soit disponible...`, 'warning');
-        await waitForPages(repoName, 10);
+        // ---- ATTENDRE QUE LE DÉPLOIEMENT SOIT PRÊT (NOUVEAU) ----
+        const pagesReady = await waitForPagesDeployment(repoName);
+        if (pagesReady) {
+          addLog(`✅ GitHub Pages prêt pour ${repoName}`, 'success');
+        } else {
+          addLog(`⚠️ GitHub Pages pas encore prêt, mais le repo est créé. Vérifie dans 2 minutes.`, 'warning');
+        }
 
+        // Mettre à jour shops.json
         await updateShopsJson(cleanVendor);
 
+        // Rafraîchir la liste
         await loadShops(token);
         setVendor('');
         setPassword('');
-        
+
         const pagesUrl = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
         addLog(`🎉 Boutique ${repoName} créée avec succès !`, 'success');
         addLog(`🌐 Disponible sur : ${pagesUrl}`, 'success');
@@ -587,7 +568,7 @@
 
       setIsProcessing(true);
       const vendorName = repoName.replace('hanout-', '');
-      
+
       try {
         addLog(`🔄 Mise à jour de ${repoName}...`, 'info');
 
@@ -601,7 +582,7 @@
         }
 
         const templateData = await templateRes.json();
-        let templateContent = base64ToUtf8(templateData.content);
+        let templateContent = atob(templateData.content);
 
         const shopRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
@@ -613,10 +594,10 @@
         }
 
         const shopData = await shopRes.json();
-        const currentContent = base64ToUtf8(shopData.content);
+        const currentContent = atob(shopData.content);
         const vendorMatch = currentContent.match(/var VENDOR = "([^"]+)";/);
         const passMatch = currentContent.match(/var PASSWORD_HASH = "([^"]+)";/);
-        
+
         const currentVendor = vendorMatch ? vendorMatch[1] : vendorName;
         const currentPass = passMatch ? passMatch[1] : '';
 
@@ -648,7 +629,7 @@
         const repos = await fetch('https://api.github.com/user/repos?per_page=100', {
           headers: { Authorization: `token ${token}` }
         });
-        
+
         if (!repos.ok) {
           throw new Error('Impossible de récupérer les repos');
         }
@@ -688,15 +669,15 @@
       <div className="min-h-screen bg-slate-900 text-white p-4">
 
         <div className="max-w-4xl mx-auto">
-          <h1 className="text-3xl font-bold text-white mb-6 text-center">SOG-Forkeur</h1>
+          <h1 className="text-3xl font-bold text-white mb-6 text-center">🔧 SOG-Forkeur</h1>
 
           <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">Token GitHub</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">🔑 Token GitHub</h2>
             <input
               type="password"
               value={token || ''}
               onChange={handleTokenChange}
-              placeholder="Entrez votre token GitHub"
+              placeholder="Entrez votre token GitHub (fine-grained)"
               className="neu-input"
             />
             <p className="text-xs text-gray-400 mt-2">
@@ -705,7 +686,7 @@
           </div>
 
           <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">Creer une boutique</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">✨ Créer une boutique</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-sm text-gray-400 block mb-1">Nom du vendeur</label>
@@ -724,7 +705,7 @@
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Mot de passe"
+                  placeholder="Mot de passe pour l'admin"
                   className="neu-input"
                   disabled={isProcessing}
                 />
@@ -735,35 +716,35 @@
               disabled={isProcessing || !token}
               className="neu-button w-full mt-4"
             >
-              {isProcessing ? 'Creation...' : 'Creer la boutique'}
+              {isProcessing ? '⏳ Création...' : '🚀 Créer la boutique'}
             </button>
           </div>
 
           <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">Actions</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">⚡ Actions</h2>
             <div className="flex flex-wrap gap-3">
               <button
                 onClick={updateAllShops}
                 disabled={isProcessing || !token}
                 className="neu-button flex-1"
               >
-                {isProcessing ? 'Mise a jour...' : 'Mettre a jour toutes les boutiques'}
+                {isProcessing ? '⏳ Mise à jour...' : '🔄 Mettre à jour toutes les boutiques'}
               </button>
               <button
                 onClick={() => loadShops(token)}
                 disabled={isProcessing || !token}
                 className="neu-button"
               >
-                Actualiser
+                🔍 Actualiser
               </button>
             </div>
           </div>
 
           <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">Boutiques existantes</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">📦 Boutiques existantes</h2>
             <div className="flex flex-wrap gap-2">
               {shops.length === 0 ? (
-                <p className="text-gray-400">Aucune boutique trouvee</p>
+                <p className="text-gray-400">Aucune boutique trouvée</p>
               ) : (
                 shops.map(shop => (
                   <div key={shop.name} className="bg-slate-800/40 px-3 py-2 rounded-lg flex items-center gap-2">
@@ -773,7 +754,7 @@
                       disabled={isProcessing || !token}
                       className="text-xs text-blue-400 hover:text-blue-300"
                     >
-                      Mettre a jour
+                      🔄
                     </button>
                     <a
                       href={`https://${TEMPLATE_OWNER}.github.io/${shop.name}/`}
@@ -781,7 +762,7 @@
                       rel="noopener noreferrer"
                       className="text-xs text-emerald-400 hover:text-emerald-300"
                     >
-                      Voir
+                      🌐
                     </a>
                   </div>
                 ))
@@ -790,7 +771,7 @@
           </div>
 
           <div className="neu-card p-6">
-            <h2 className="text-xl font-semibold text-white mb-3">Logs</h2>
+            <h2 className="text-xl font-semibold text-white mb-3">📋 Logs</h2>
             <div className="log-area" ref={logRef}>
               {logs.length === 0 ? (
                 <span className="text-gray-500">Aucun log disponible</span>
@@ -806,7 +787,7 @@
               onClick={() => setLogs([])}
               className="text-xs text-gray-500 hover:text-gray-300 mt-2"
             >
-              Effacer les logs
+              🗑️ Effacer les logs
             </button>
           </div>
 
@@ -819,7 +800,5 @@
   const root = ReactDOM.createRoot(container);
   root.render(<App />);
 </script>
-
-
-<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));}</script>
-</body></html>
+</body>
+</html>
