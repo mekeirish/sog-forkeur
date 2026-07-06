@@ -89,10 +89,10 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
-
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#4b6cb7">
-<link rel="apple-touch-icon" href="icon.png"></head>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#4b6cb7" />
+  <link rel="apple-touch-icon" href="icon.png" />
+</head>
 <body>
 <div id="root"></div>
 
@@ -100,14 +100,12 @@
   const { useState, useEffect, useRef } = React;
 
   function App() {
-
     // ---- ÉTATS ----
     const [token, setToken] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [logs, setLogs] = useState([]);
     const [shops, setShops] = useState([]);
     const [vendor, setVendor] = useState('');
-    const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const logRef = useRef(null);
 
@@ -166,15 +164,6 @@
     // ---- AJOUT DE LOG ----
     const addLog = (message, type = 'info') => {
       setLogs(prev => [...prev, { message, type, timestamp: new Date().toLocaleTimeString() }]);
-    };
-
-    // ---- SHA256 POUR LE MOT DE PASSE ----
-    const sha256 = async (message) => {
-      const msgBuffer = new TextEncoder().encode(message);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-      return Array.from(new Uint8Array(hashBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
     };
 
     // ---- VÉRIFIER LES PERMISSIONS DU TOKEN ----
@@ -277,7 +266,7 @@
       }
     };
 
-    // ---- ATTENDRE QUE GITHUB PAGES SOIT PRÊT (NOUVEAU) ----
+    // ---- ATTENDRE QUE GITHUB PAGES SOIT PRÊT ----
     const waitForPagesDeployment = async (repoName, maxAttempts = 25) => {
       let attempts = 0;
       const pagesApiUrl = `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/pages`;
@@ -287,7 +276,6 @@
 
       while (attempts < maxAttempts) {
         try {
-          // 1. Vérifier le statut via l'API Pages
           const res = await fetch(pagesApiUrl, {
             headers: { Authorization: `token ${token}` }
           });
@@ -302,14 +290,12 @@
             }
           }
 
-          // 2. Vérifier si le site est accessible
           const siteCheck = await fetch(siteUrl, { method: 'HEAD' });
           if (siteCheck.status === 200) {
             addLog(`✅ Site accessible : ${siteUrl}`, 'success');
             return true;
           }
 
-          // 3. Si le site n'est pas encore prêt
           addLog(`⏳ Site pas encore accessible... (${attempts + 1}/${maxAttempts})`, 'warning');
           await new Promise(resolve => setTimeout(resolve, 3000));
           attempts++;
@@ -450,14 +436,10 @@
       }
     };
 
-    // ---- CRÉATION D'UNE BOUTIQUE (AMÉLIORÉE) ----
+    // ---- CRÉATION D'UNE BOUTIQUE (SANS MOT DE PASSE) ----
     const createShop = async () => {
       if (!vendor.trim()) {
         addLog('❌ Veuillez entrer un nom de vendeur', 'error');
-        return;
-      }
-      if (!password.trim()) {
-        addLog('❌ Veuillez entrer un mot de passe admin', 'error');
         return;
       }
       if (!token) {
@@ -494,7 +476,6 @@
 
         addLog(`✅ Repo ${repoName} créé avec succès !`, 'success');
 
-        // Attendre un peu que le repo soit accessible
         addLog(`⏳ Attente que le repo soit disponible...`, 'warning');
         await new Promise(resolve => setTimeout(resolve, 3000));
 
@@ -503,11 +484,8 @@
         const templateData = await getFileContent(TEMPLATE_REPO, 'index.html');
         let templateContent = atob(templateData.content);
 
-        const passwordHash = await sha256(password);
-        addLog(`🔐 Hash du mot de passe généré`, 'info');
-
+        // Remplacer uniquement {{VENDOR}} (le hash n'existe plus dans le template)
         let newContent = templateContent.replace(/{{VENDOR}}/g, cleanVendor);
-        newContent = newContent.replace(/{{PASSWORD_HASH}}/g, passwordHash);
 
         addLog(`💾 Sauvegarde de index.html...`, 'info');
         await updateFile(repoName, 'index.html', newContent, `Initialisation de ${repoName}`);
@@ -535,7 +513,6 @@
         // Activer GitHub Pages
         await enableGitHubPages(repoName);
 
-        // ---- ATTENDRE QUE LE DÉPLOIEMENT SOIT PRÊT (NOUVEAU) ----
         const pagesReady = await waitForPagesDeployment(repoName);
         if (pagesReady) {
           addLog(`✅ GitHub Pages prêt pour ${repoName}`, 'success');
@@ -549,11 +526,13 @@
         // Rafraîchir la liste
         await loadShops(token);
         setVendor('');
-        setPassword('');
 
         const pagesUrl = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
         addLog(`🎉 Boutique ${repoName} créée avec succès !`, 'success');
         addLog(`🌐 Disponible sur : ${pagesUrl}`, 'success');
+
+        // Ajout d'une info pour associer le vendeur Firebase
+        addLog(`ℹ️ N'oublie pas d'associer un compte Firebase à cette boutique dans SOG (table vendors).`, 'info');
 
       } catch (error) {
         addLog(`❌ Erreur: ${error.message}`, 'error');
@@ -599,13 +578,11 @@
         const shopData = await shopRes.json();
         const currentContent = atob(shopData.content);
         const vendorMatch = currentContent.match(/var VENDOR = "([^"]+)";/);
-        const passMatch = currentContent.match(/var PASSWORD_HASH = "([^"]+)";/);
 
         const currentVendor = vendorMatch ? vendorMatch[1] : vendorName;
-        const currentPass = passMatch ? passMatch[1] : '';
 
+        // Remplacer {{VENDOR}} (le template ne contient plus de {{PASSWORD_HASH}})
         let newContent = templateContent.replace(/{{VENDOR}}/g, currentVendor);
-        newContent = newContent.replace(/{{PASSWORD_HASH}}/g, currentPass);
 
         await updateFile(repoName, 'index.html', newContent, `Mise à jour de ${repoName}`);
         addLog(`✅ ${repoName} mis à jour.`, 'success');
@@ -690,7 +667,7 @@
 
           <div className="neu-card p-6 mb-6">
             <h2 className="text-xl font-semibold text-white mb-3">✨ Créer une boutique</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               <div>
                 <label className="text-sm text-gray-400 block mb-1">Nom du vendeur</label>
                 <input
@@ -698,17 +675,6 @@
                   value={vendor}
                   onChange={(e) => setVendor(e.target.value)}
                   placeholder="ex: gomaziz"
-                  className="neu-input"
-                  disabled={isProcessing}
-                />
-              </div>
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">Mot de passe admin</label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Mot de passe pour l'admin"
                   className="neu-input"
                   disabled={isProcessing}
                 />
@@ -721,6 +687,9 @@
             >
               {isProcessing ? '⏳ Création...' : '🚀 Créer la boutique'}
             </button>
+            <p className="text-xs text-gray-400 mt-2">
+              Les admins se connecteront avec leurs identifiants Firebase (email/mot de passe).
+            </p>
           </div>
 
           <div className="neu-card p-6 mb-6">
@@ -804,6 +773,12 @@
   root.render(<App />);
 </script>
 
-<script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));}</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js');
+    });
+  }
+</script>
 </body>
 </html>
