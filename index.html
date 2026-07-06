@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes" />
   <title>SOG-Forkeur - Gestion des boutiques</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -88,6 +91,24 @@
       display: inline-block;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .tab-button {
+      background: rgba(30,41,59,0.5);
+      color: #94a3b8;
+      border: none;
+      padding: 0.5rem 1.5rem;
+      border-radius: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-button.active {
+      background: rgba(59,130,246,0.3);
+      color: #f1f5f9;
+      box-shadow: 0 4px 16px rgba(59,130,246,0.15);
+    }
+    .tab-button:hover:not(.active) {
+      background: rgba(30,41,59,0.8);
+      color: #f1f5f9;
+    }
   </style>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#4b6cb7" />
@@ -100,6 +121,21 @@
   const { useState, useEffect, useRef } = React;
 
   function App() {
+    // ---- FIREBASE INIT ----
+    var firebaseConfig = {
+      apiKey: "AIzaSyCegKjHSw2DzF1zcBVdG6iZyGK2P3ig1rM",
+      authDomain: "sog-hanout.firebaseapp.com",
+      projectId: "sog-hanout",
+      storageBucket: "sog-hanout.firebasestorage.app",
+      messagingSenderId: "108437302312",
+      appId: "1:108437302312:web:9faa1f7084e5797cf9591d",
+      measurementId: "G-V1VFE9YDE3",
+      databaseURL: "https://sog-hanout-default-rtdb.europe-west1.firebasedatabase.app/"
+    };
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    var auth = firebase.auth();
+    var db = firebase.database();
+
     // ---- ÉTATS ----
     const [token, setToken] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -108,6 +144,22 @@
     const [vendor, setVendor] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const logRef = useRef(null);
+    
+    // États Firebase Auth
+    const [firebaseUser, setFirebaseUser] = useState(null);
+    const [isFirebaseAdmin, setIsFirebaseAdmin] = useState(false);
+    const [activeTab, setActiveTab] = useState('forkeur'); // 'forkeur' | 'admin'
+    
+    // États gestion admins
+    const [admins, setAdmins] = useState([]);
+    const [newAdminEmail, setNewAdminEmail] = useState('');
+    const [isAddingAdmin, setIsAddingAdmin] = useState(false);
+    
+    // États gestion vendeurs (dans Forkeur)
+    const [vendors, setVendors] = useState([]);
+    const [newVendorEmail, setNewVendorEmail] = useState('');
+    const [newVendorName, setNewVendorName] = useState('');
+    const [isAddingVendor, setIsAddingVendor] = useState(false);
 
     // ---- CONSTANTES ----
     const TEMPLATE_OWNER = 'mekeirish';
@@ -121,6 +173,34 @@
         loadShops(storedToken);
       }
       setIsLoading(false);
+    }, []);
+
+    // ---- AUTH FIREBASE (pour l'admin du Forkeur) ----
+    useEffect(() => {
+      var unsubscribe = auth.onAuthStateChanged(async function(user) {
+        if (user) {
+          setFirebaseUser(user);
+          // Vérifier si l'utilisateur est admin
+          db.ref('admins').once('value').then(function(snapshot) {
+            var adminList = snapshot.val() || [];
+            if (Array.isArray(adminList) && adminList.includes(user.uid)) {
+              setIsFirebaseAdmin(true);
+              loadAdmins();
+              loadVendors();
+              addLog(`✅ Authentifié en tant qu'admin Firebase`, 'success');
+            } else {
+              setIsFirebaseAdmin(false);
+              addLog(`ℹ️ Connecté en tant que ${user.email} (pas admin)`, 'info');
+            }
+          }).catch(function(err) {
+            addLog(`❌ Erreur vérification admin: ${err.message}`, 'error');
+          });
+        } else {
+          setFirebaseUser(null);
+          setIsFirebaseAdmin(false);
+        }
+      });
+      return function() { unsubscribe(); };
     }, []);
 
     // ---- SCROLL AUTO DES LOGS ----
@@ -166,6 +246,177 @@
       setLogs(prev => [...prev, { message, type, timestamp: new Date().toLocaleTimeString() }]);
     };
 
+    // ---- AUTH FIREBASE (connexion/déconnexion) ----
+    const handleFirebaseLogin = async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const email = form.email.value;
+      const password = form.password.value;
+      setIsProcessing(true);
+      try {
+        await auth.signInWithEmailAndPassword(email, password);
+        addLog(`✅ Connecté à Firebase`, 'success');
+      } catch (error) {
+        addLog(`❌ Erreur connexion Firebase: ${error.message}`, 'error');
+      }
+      setIsProcessing(false);
+    };
+
+    const handleFirebaseLogout = () => {
+      auth.signOut();
+      addLog(`🔓 Déconnecté de Firebase`, 'info');
+    };
+
+    // ---- GESTION DES ADMINS ----
+    const loadAdmins = function() {
+      db.ref('admins').on('value', function(snapshot) {
+        var data = snapshot.val() || [];
+        if (Array.isArray(data)) {
+          // Récupérer les emails des admins
+          var adminList = data.map(function(uid) {
+            return { uid: uid, email: 'Chargement...' };
+          });
+          setAdmins(adminList);
+          // Charger les emails
+          adminList.forEach(function(admin, index) {
+            if (admin.uid) {
+              db.ref('users/' + admin.uid + '/email').once('value').then(function(snap) {
+                var email = snap.val();
+                if (email) {
+                  setAdmins(prev => {
+                    var newList = [...prev];
+                    newList[index].email = email;
+                    return newList;
+                  });
+                }
+              });
+            }
+          });
+        } else {
+          setAdmins([]);
+        }
+      });
+    };
+
+    const addAdmin = async function() {
+      if (!newAdminEmail.trim()) {
+        addLog('❌ Veuillez entrer un email', 'error');
+        return;
+      }
+      setIsAddingAdmin(true);
+      try {
+        // Chercher l'uid de l'utilisateur
+        var usersRef = db.ref('users');
+        var snapshot = await usersRef.once('value');
+        var users = snapshot.val() || {};
+        var foundUid = null;
+        for (var uid in users) {
+          if (users[uid].email === newAdminEmail.trim()) {
+            foundUid = uid;
+            break;
+          }
+        }
+        if (!foundUid) {
+          addLog(`❌ Email ${newAdminEmail} non trouvé. L'utilisateur doit d'abord se connecter à SOG.`, 'error');
+          setIsAddingAdmin(false);
+          return;
+        }
+        // Ajouter à la liste des admins
+        var adminsRef = db.ref('admins');
+        var currentAdmins = await adminsRef.once('value');
+        var adminList = currentAdmins.val() || [];
+        if (!adminList.includes(foundUid)) {
+          adminList.push(foundUid);
+          await adminsRef.set(adminList);
+          addLog(`✅ ${newAdminEmail} est maintenant admin`, 'success');
+          setNewAdminEmail('');
+        } else {
+          addLog(`ℹ️ ${newAdminEmail} est déjà admin`, 'info');
+        }
+      } catch (error) {
+        addLog(`❌ Erreur: ${error.message}`, 'error');
+      }
+      setIsAddingAdmin(false);
+    };
+
+    const removeAdmin = async function(uid) {
+      if (!confirm('Retirer cet admin ?')) return;
+      try {
+        var adminsRef = db.ref('admins');
+        var snapshot = await adminsRef.once('value');
+        var adminList = snapshot.val() || [];
+        adminList = adminList.filter(id => id !== uid);
+        await adminsRef.set(adminList);
+        addLog(`✅ Admin retiré`, 'success');
+      } catch (error) {
+        addLog(`❌ Erreur: ${error.message}`, 'error');
+      }
+    };
+
+    // ---- GESTION DES VENDEURS ----
+    const loadVendors = function() {
+      db.ref('vendors').on('value', function(snapshot) {
+        var data = snapshot.val();
+        if (data) {
+          var vendorList = Object.keys(data).map(function(key) {
+            return { name: key, ...data[key] };
+          });
+          setVendors(vendorList);
+        } else {
+          setVendors([]);
+        }
+      });
+    };
+
+    const addVendor = async function() {
+      if (!newVendorName.trim() || !newVendorEmail.trim()) {
+        addLog('❌ Veuillez remplir tous les champs', 'error');
+        return;
+      }
+      setIsAddingVendor(true);
+      try {
+        // Chercher l'uid de l'utilisateur
+        var usersRef = db.ref('users');
+        var snapshot = await usersRef.once('value');
+        var users = snapshot.val() || {};
+        var foundUid = null;
+        for (var uid in users) {
+          if (users[uid].email === newVendorEmail.trim()) {
+            foundUid = uid;
+            break;
+          }
+        }
+        if (!foundUid) {
+          addLog(`❌ Email ${newVendorEmail} non trouvé. L'utilisateur doit d'abord se connecter à SOG.`, 'error');
+          setIsAddingVendor(false);
+          return;
+        }
+        var vendorRef = db.ref('vendors/' + newVendorName.trim().toLowerCase());
+        await vendorRef.set({
+          uid: foundUid,
+          name: newVendorName.trim(),
+          email: newVendorEmail.trim(),
+          createdAt: new Date().toISOString()
+        });
+        addLog(`✅ ${newVendorName} est maintenant vendeur`, 'success');
+        setNewVendorName('');
+        setNewVendorEmail('');
+      } catch (error) {
+        addLog(`❌ Erreur: ${error.message}`, 'error');
+      }
+      setIsAddingVendor(false);
+    };
+
+    const removeVendor = async function(vendorName) {
+      if (!confirm(`Supprimer le vendeur ${vendorName} ?`)) return;
+      try {
+        await db.ref('vendors/' + vendorName).remove();
+        addLog(`✅ ${vendorName} retiré des vendeurs`, 'success');
+      } catch (error) {
+        addLog(`❌ Erreur: ${error.message}`, 'error');
+      }
+    };
+
     // ---- VÉRIFIER LES PERMISSIONS DU TOKEN ----
     const checkTokenPermissions = async () => {
       try {
@@ -175,13 +426,9 @@
         if (!res.ok) throw new Error('Token invalide');
         const user = await res.json();
         addLog(`✅ Token valide pour ${user.login}`, 'success');
-        
         const scopes = res.headers.get('X-OAuth-Scopes');
-        if (scopes) {
-          addLog(`🔑 Scopes: ${scopes}`, 'info');
-          if (!scopes.includes('repo') && !scopes.includes('public_repo')) {
-            addLog('⚠️ Le token n\'a pas les permissions "repo" ou "public_repo".', 'warning');
-          }
+        if (scopes && !scopes.includes('repo') && !scopes.includes('public_repo')) {
+          addLog('⚠️ Le token n\'a pas les permissions "repo" ou "public_repo".', 'warning');
         }
         return true;
       } catch (err) {
@@ -219,7 +466,6 @@
           include_all_branches: false
         })
       });
-      
       if (!res.ok) {
         const err = await res.json();
         if (err.message && err.message.includes('already exists')) {
@@ -267,46 +513,25 @@
     };
 
     // ---- ATTENDRE QUE GITHUB PAGES SOIT PRÊT ----
-    const waitForPagesDeployment = async (repoName, maxAttempts = 25) => {
+    const waitForPagesDeployment = async (repoName, maxAttempts = 20) => {
       let attempts = 0;
-      const pagesApiUrl = `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/pages`;
       const siteUrl = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
-
       addLog(`⏳ Vérification du déploiement Pages pour ${repoName}...`, 'warning');
-
       while (attempts < maxAttempts) {
         try {
-          const res = await fetch(pagesApiUrl, {
-            headers: { Authorization: `token ${token}` }
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === 'building' || data.status === 'pending') {
-              addLog(`⏳ Déploiement en cours... (${attempts + 1}/${maxAttempts})`, 'warning');
-              await new Promise(resolve => setTimeout(resolve, 3000));
-              attempts++;
-              continue;
-            }
-          }
-
           const siteCheck = await fetch(siteUrl, { method: 'HEAD' });
           if (siteCheck.status === 200) {
             addLog(`✅ Site accessible : ${siteUrl}`, 'success');
             return true;
           }
-
           addLog(`⏳ Site pas encore accessible... (${attempts + 1}/${maxAttempts})`, 'warning');
           await new Promise(resolve => setTimeout(resolve, 3000));
           attempts++;
-
         } catch (err) {
-          addLog(`⚠️ Erreur vérification: ${err.message}`, 'warning');
           await new Promise(resolve => setTimeout(resolve, 3000));
           attempts++;
         }
       }
-
       addLog(`⚠️ Déploiement Pages non confirmé après ${maxAttempts} tentatives.`, 'warning');
       return false;
     };
@@ -318,9 +543,7 @@
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/${filePath}`,
           { headers: { Authorization: `token ${token}` } }
         );
-        if (!res.ok) {
-          throw new Error(`Erreur ${res.status}: ${await res.text()}`);
-        }
+        if (!res.ok) throw new Error(`Erreur ${res.status}: ${await res.text()}`);
         return await res.json();
       } catch (err) {
         throw new Error(`Impossible de récupérer ${filePath}: ${err.message}`);
@@ -335,14 +558,12 @@
           const fileData = await getFileContent(repoName, filePath);
           sha = fileData.sha;
         } catch (e) {}
-
         const payload = {
           message: message,
           content: btoa(unescape(encodeURIComponent(content))),
           branch: 'main'
         };
         if (sha) payload.sha = sha;
-
         const res = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/${filePath}`,
           {
@@ -354,7 +575,6 @@
             body: JSON.stringify(payload)
           }
         );
-
         if (!res.ok) {
           const err = await res.json();
           throw new Error(`Erreur ${res.status}: ${err.message}`);
@@ -368,11 +588,10 @@
     // ---- MISE À JOUR DE SHOPS.JSON ----
     const updateShopsJson = async (vendorName) => {
       try {
-        addLog(`📝 Vérification de ${vendorName} dans shops.json...`, 'info');
+        addLog(`📝 Mise à jour de shops.json pour ${vendorName}...`, 'info');
         const shopsUrl = 'https://api.github.com/repos/mekeirish/sog/contents/shops.json';
         let shops = [];
         let sha = null;
-
         try {
           const getRes = await fetch(shopsUrl, {
             headers: { Authorization: `token ${token}` }
@@ -382,29 +601,18 @@
             sha = data.sha;
             const decoded = atob(data.content);
             shops = JSON.parse(decoded);
-            addLog(`📄 shops.json chargé (${shops.length} boutiques)`, 'info');
-          } else if (getRes.status === 404) {
-            addLog('📄 shops.json n\'existe pas, création...', 'warning');
-            shops = [];
-          } else {
-            throw new Error(`Erreur ${getRes.status}`);
           }
-        } catch (e) {
-          shops = [];
-        }
-
+        } catch (e) { /* ignore */ }
         const existing = shops.find(s => s.vendor === vendorName);
         if (existing) {
           addLog(`ℹ️ ${vendorName} déjà présent dans shops.json`, 'info');
           return true;
         }
-
         shops.push({
           vendor: vendorName,
           name: vendorName.charAt(0).toUpperCase() + vendorName.slice(1),
           url: `https://${TEMPLATE_OWNER}.github.io/hanout-${vendorName}/`
         });
-
         const content = btoa(unescape(encodeURIComponent(JSON.stringify(shops, null, 2))));
         const payload = {
           message: `✨ Ajout automatique de ${vendorName}`,
@@ -412,7 +620,6 @@
           branch: 'main'
         };
         if (sha) payload.sha = sha;
-
         const putRes = await fetch(shopsUrl, {
           method: 'PUT',
           headers: {
@@ -421,22 +628,19 @@
           },
           body: JSON.stringify(payload)
         });
-
         if (!putRes.ok) {
           const err = await putRes.json();
           throw new Error(`GitHub ${putRes.status}: ${err.message}`);
         }
-
         addLog(`✅ ${vendorName} ajouté dans shops.json`, 'success');
         return true;
-
       } catch (error) {
         addLog(`❌ Erreur mise à jour shops.json: ${error.message}`, 'error');
         return false;
       }
     };
 
-    // ---- CRÉATION D'UNE BOUTIQUE (SANS MOT DE PASSE) ----
+    // ---- CRÉATION D'UNE BOUTIQUE ----
     const createShop = async () => {
       if (!vendor.trim()) {
         addLog('❌ Veuillez entrer un nom de vendeur', 'error');
@@ -459,7 +663,6 @@
           return;
         }
 
-        addLog(`🔍 Vérification si ${repoName} existe...`, 'info');
         const exists = await checkRepoExists(repoName);
         if (exists) {
           addLog(`⚠️ ${repoName} existe déjà !`, 'warning');
@@ -467,24 +670,19 @@
           return;
         }
 
-        addLog(`🚀 Création de ${repoName} à partir du template...`, 'info');
+        addLog(`🚀 Création de ${repoName}...`, 'info');
         const repoData = await createRepoFromTemplate(repoName);
         if (!repoData) {
           setIsProcessing(false);
           return;
         }
+        addLog(`✅ Repo ${repoName} créé`, 'success');
 
-        addLog(`✅ Repo ${repoName} créé avec succès !`, 'success');
-
-        addLog(`⏳ Attente que le repo soit disponible...`, 'warning');
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // Récupérer le template
         addLog(`📄 Récupération du template...`, 'info');
         const templateData = await getFileContent(TEMPLATE_REPO, 'index.html');
         let templateContent = atob(templateData.content);
-
-        // Remplacer uniquement {{VENDOR}} (le hash n'existe plus dans le template)
         let newContent = templateContent.replace(/{{VENDOR}}/g, cleanVendor);
 
         addLog(`💾 Sauvegarde de index.html...`, 'info');
@@ -510,34 +708,37 @@
         );
         addLog(`✅ don.json créé`, 'success');
 
-        // Activer GitHub Pages
         await enableGitHubPages(repoName);
-
-        const pagesReady = await waitForPagesDeployment(repoName);
-        if (pagesReady) {
-          addLog(`✅ GitHub Pages prêt pour ${repoName}`, 'success');
-        } else {
-          addLog(`⚠️ GitHub Pages pas encore prêt, mais le repo est créé. Vérifie dans 2 minutes.`, 'warning');
-        }
-
-        // Mettre à jour shops.json
+        await waitForPagesDeployment(repoName);
         await updateShopsJson(cleanVendor);
-
-        // Rafraîchir la liste
         await loadShops(token);
         setVendor('');
 
         const pagesUrl = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
-        addLog(`🎉 Boutique ${repoName} créée avec succès !`, 'success');
-        addLog(`🌐 Disponible sur : ${pagesUrl}`, 'success');
+        addLog(`🎉 Boutique ${repoName} créée !`, 'success');
+        addLog(`🌐 ${pagesUrl}`, 'success');
 
-        // Ajout d'une info pour associer le vendeur Firebase
-        addLog(`ℹ️ N'oublie pas d'associer un compte Firebase à cette boutique dans SOG (table vendors).`, 'info');
+        // Ajouter automatiquement le vendeur si on est connecté à Firebase
+        if (firebaseUser && isFirebaseAdmin) {
+          addLog(`🔗 Ajout automatique du vendeur ${cleanVendor}...`, 'info');
+          try {
+            const vendorRef = db.ref('vendors/' + cleanVendor);
+            await vendorRef.set({
+              uid: firebaseUser.uid,
+              name: cleanVendor,
+              email: firebaseUser.email,
+              createdAt: new Date().toISOString()
+            });
+            addLog(`✅ ${cleanVendor} associé à ${firebaseUser.email}`, 'success');
+            loadVendors();
+          } catch (err) {
+            addLog(`⚠️ Erreur association vendeur: ${err.message}`, 'warning');
+          }
+        }
 
       } catch (error) {
         addLog(`❌ Erreur: ${error.message}`, 'error');
       }
-
       setIsProcessing(false);
     };
 
@@ -547,52 +748,33 @@
         addLog('❌ Token requis', 'error');
         return;
       }
-
       setIsProcessing(true);
       const vendorName = repoName.replace('hanout-', '');
-
       try {
         addLog(`🔄 Mise à jour de ${repoName}...`, 'info');
-
         const templateRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/contents/index.html`,
           { headers: { Authorization: `token ${token}` } }
         );
-
-        if (!templateRes.ok) {
-          throw new Error('Impossible de récupérer le template');
-        }
-
+        if (!templateRes.ok) throw new Error('Impossible de récupérer le template');
         const templateData = await templateRes.json();
         let templateContent = atob(templateData.content);
-
         const shopRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
           { headers: { Authorization: `token ${token}` } }
         );
-
-        if (!shopRes.ok) {
-          throw new Error(`Impossible de récupérer ${repoName}`);
-        }
-
+        if (!shopRes.ok) throw new Error(`Impossible de récupérer ${repoName}`);
         const shopData = await shopRes.json();
         const currentContent = atob(shopData.content);
         const vendorMatch = currentContent.match(/var VENDOR = "([^"]+)";/);
-
         const currentVendor = vendorMatch ? vendorMatch[1] : vendorName;
-
-        // Remplacer {{VENDOR}} (le template ne contient plus de {{PASSWORD_HASH}})
         let newContent = templateContent.replace(/{{VENDOR}}/g, currentVendor);
-
         await updateFile(repoName, 'index.html', newContent, `Mise à jour de ${repoName}`);
         addLog(`✅ ${repoName} mis à jour.`, 'success');
-
         await updateShopsJson(currentVendor);
-
       } catch (error) {
         addLog(`❌ Erreur ${repoName}: ${error.message}`, 'error');
       }
-
       setIsProcessing(false);
     };
 
@@ -602,37 +784,26 @@
         addLog('❌ Token requis', 'error');
         return;
       }
-
       setIsProcessing(true);
-
       try {
         const repos = await fetch('https://api.github.com/user/repos?per_page=100', {
           headers: { Authorization: `token ${token}` }
         });
-
-        if (!repos.ok) {
-          throw new Error('Impossible de récupérer les repos');
-        }
-
+        if (!repos.ok) throw new Error('Impossible de récupérer les repos');
         const repoList = await repos.json();
         const shopRepos = repoList.filter(repo => 
           repo.name.startsWith('hanout-') && repo.name !== 'hanout-template'
         );
-
         addLog(`📦 ${shopRepos.length} boutique(s) trouvée(s).`, 'info');
-
         let successCount = 0;
         for (const repo of shopRepos) {
           await updateShop(repo.name);
           successCount++;
         }
-
         addLog(`✅ ${successCount} boutique(s) mises à jour.`, 'success');
-
       } catch (error) {
-        addLog(`❌ Erreur lors de la mise à jour massive: ${error.message}`, 'error');
+        addLog(`❌ Erreur mise à jour massive: ${error.message}`, 'error');
       }
-
       setIsProcessing(false);
     };
 
@@ -648,101 +819,265 @@
     return (
       <div className="min-h-screen bg-slate-900 text-white p-4">
 
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <h1 className="text-3xl font-bold text-white mb-6 text-center">🔧 SOG-Forkeur</h1>
 
-          <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">🔑 Token GitHub</h2>
-            <input
-              type="password"
-              value={token || ''}
-              onChange={handleTokenChange}
-              placeholder="Entrez votre token GitHub (fine-grained)"
-              className="neu-input"
-            />
-            <p className="text-xs text-gray-400 mt-2">
-              Le token est stocké localement dans votre navigateur.
-            </p>
+          {/* ---- ONGLETS ---- */}
+          <div className="flex gap-2 mb-6">
+            <button 
+              onClick={() => setActiveTab('forkeur')}
+              className={'tab-button ' + (activeTab === 'forkeur' ? 'active' : '')}
+            >
+              🏪 Forkeur
+            </button>
+            <button 
+              onClick={() => setActiveTab('admin')}
+              className={'tab-button ' + (activeTab === 'admin' ? 'active' : '')}
+            >
+              👑 Administration Firebase
+            </button>
           </div>
 
-          <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">✨ Créer une boutique</h2>
-            <div className="grid grid-cols-1 gap-4">
-              <div>
-                <label className="text-sm text-gray-400 block mb-1">Nom du vendeur</label>
+          {/* ---- ONGLET FORKEUR ---- */}
+          {activeTab === 'forkeur' && (
+            <div>
+              {/* Token GitHub */}
+              <div className="neu-card p-6 mb-6">
+                <h2 className="text-xl font-semibold text-white mb-3">🔑 Token GitHub</h2>
                 <input
-                  type="text"
-                  value={vendor}
-                  onChange={(e) => setVendor(e.target.value)}
-                  placeholder="ex: gomaziz"
+                  type="password"
+                  value={token || ''}
+                  onChange={handleTokenChange}
+                  placeholder="Entrez votre token GitHub (fine-grained)"
                   className="neu-input"
-                  disabled={isProcessing}
                 />
+                <p className="text-xs text-gray-400 mt-2">
+                  Le token est stocké localement dans votre navigateur.
+                </p>
+              </div>
+
+              {/* Créer une boutique */}
+              <div className="neu-card p-6 mb-6">
+                <h2 className="text-xl font-semibold text-white mb-3">✨ Créer une boutique</h2>
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <label className="text-sm text-gray-400 block mb-1">Nom du vendeur</label>
+                    <input
+                      type="text"
+                      value={vendor}
+                      onChange={(e) => setVendor(e.target.value)}
+                      placeholder="ex: gomaziz"
+                      className="neu-input"
+                      disabled={isProcessing}
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={createShop}
+                  disabled={isProcessing || !token}
+                  className="neu-button w-full mt-4"
+                >
+                  {isProcessing ? '⏳ Création...' : '🚀 Créer la boutique'}
+                </button>
+                {firebaseUser && isFirebaseAdmin && (
+                  <p className="text-xs text-emerald-400 mt-2">
+                    ✅ Tu es connecté à Firebase, le vendeur sera automatiquement associé.
+                  </p>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="neu-card p-6 mb-6">
+                <h2 className="text-xl font-semibold text-white mb-3">⚡ Actions</h2>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={updateAllShops}
+                    disabled={isProcessing || !token}
+                    className="neu-button flex-1"
+                  >
+                    {isProcessing ? '⏳ Mise à jour...' : '🔄 Mettre à jour toutes les boutiques'}
+                  </button>
+                  <button
+                    onClick={() => loadShops(token)}
+                    disabled={isProcessing || !token}
+                    className="neu-button"
+                  >
+                    🔍 Actualiser
+                  </button>
+                </div>
+              </div>
+
+              {/* Liste des boutiques */}
+              <div className="neu-card p-6 mb-6">
+                <h2 className="text-xl font-semibold text-white mb-3">📦 Boutiques existantes</h2>
+                <div className="flex flex-wrap gap-2">
+                  {shops.length === 0 ? (
+                    <p className="text-gray-400">Aucune boutique trouvée</p>
+                  ) : (
+                    shops.map(shop => (
+                      <div key={shop.name} className="bg-slate-800/40 px-3 py-2 rounded-lg flex items-center gap-2">
+                        <span className="text-sm text-white">📁 {shop.name}</span>
+                        <button
+                          onClick={() => updateShop(shop.name)}
+                          disabled={isProcessing || !token}
+                          className="text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          🔄
+                        </button>
+                        <a
+                          href={`https://${TEMPLATE_OWNER}.github.io/${shop.name}/`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-emerald-400 hover:text-emerald-300"
+                        >
+                          🌐
+                        </a>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
-            <button
-              onClick={createShop}
-              disabled={isProcessing || !token}
-              className="neu-button w-full mt-4"
-            >
-              {isProcessing ? '⏳ Création...' : '🚀 Créer la boutique'}
-            </button>
-            <p className="text-xs text-gray-400 mt-2">
-              Les admins se connecteront avec leurs identifiants Firebase (email/mot de passe).
-            </p>
-          </div>
+          )}
 
-          <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">⚡ Actions</h2>
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={updateAllShops}
-                disabled={isProcessing || !token}
-                className="neu-button flex-1"
-              >
-                {isProcessing ? '⏳ Mise à jour...' : '🔄 Mettre à jour toutes les boutiques'}
-              </button>
-              <button
-                onClick={() => loadShops(token)}
-                disabled={isProcessing || !token}
-                className="neu-button"
-              >
-                🔍 Actualiser
-              </button>
-            </div>
-          </div>
-
-          <div className="neu-card p-6 mb-6">
-            <h2 className="text-xl font-semibold text-white mb-3">📦 Boutiques existantes</h2>
-            <div className="flex flex-wrap gap-2">
-              {shops.length === 0 ? (
-                <p className="text-gray-400">Aucune boutique trouvée</p>
-              ) : (
-                shops.map(shop => (
-                  <div key={shop.name} className="bg-slate-800/40 px-3 py-2 rounded-lg flex items-center gap-2">
-                    <span className="text-sm text-white">📁 {shop.name}</span>
-                    <button
-                      onClick={() => updateShop(shop.name)}
-                      disabled={isProcessing || !token}
-                      className="text-xs text-blue-400 hover:text-blue-300"
-                    >
-                      🔄
+          {/* ---- ONGLET ADMINISTRATION FIREBASE ---- */}
+          {activeTab === 'admin' && (
+            <div>
+              {/* Connexion Firebase */}
+              {!firebaseUser ? (
+                <div className="neu-card p-6 mb-6">
+                  <h2 className="text-xl font-semibold text-white mb-3">🔐 Connexion Firebase</h2>
+                  <form onSubmit={handleFirebaseLogin} className="space-y-4">
+                    <input
+                      type="email"
+                      name="email"
+                      placeholder="Email"
+                      className="neu-input"
+                      required
+                    />
+                    <input
+                      type="password"
+                      name="password"
+                      placeholder="Mot de passe"
+                      className="neu-input"
+                      required
+                    />
+                    <button type="submit" className="neu-button w-full" disabled={isProcessing}>
+                      {isProcessing ? '⏳ Connexion...' : '🔑 Se connecter'}
                     </button>
-                    <a
-                      href={`https://${TEMPLATE_OWNER}.github.io/${shop.name}/`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-emerald-400 hover:text-emerald-300"
-                    >
-                      🌐
-                    </a>
+                  </form>
+                </div>
+              ) : (
+                <div>
+                  {/* Info utilisateur */}
+                  <div className="neu-card p-6 mb-6">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-white font-medium">👤 {firebaseUser.email}</p>
+                        <p className="text-sm text-gray-400">
+                          {isFirebaseAdmin ? '✅ Admin' : '❌ Pas admin'}
+                        </p>
+                      </div>
+                      <button onClick={handleFirebaseLogout} className="neu-button">
+                        🔓 Déconnexion
+                      </button>
+                    </div>
                   </div>
-                ))
+
+                  {/* Gestion des admins */}
+                  {isFirebaseAdmin && (
+                    <div>
+                      <div className="neu-card p-6 mb-6">
+                        <h3 className="text-lg font-semibold text-white mb-3">👑 Gestion des admins</h3>
+                        <div className="flex gap-3 mb-4">
+                          <input
+                            type="email"
+                            value={newAdminEmail}
+                            onChange={(e) => setNewAdminEmail(e.target.value)}
+                            placeholder="Email du nouvel admin"
+                            className="neu-input flex-1"
+                          />
+                          <button
+                            onClick={addAdmin}
+                            disabled={isAddingAdmin}
+                            className="neu-button"
+                          >
+                            {isAddingAdmin ? '⏳' : '✅ Ajouter'}
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {admins.map((admin, index) => (
+                            <div key={index} className="flex justify-between items-center bg-slate-800/40 p-2 rounded-lg">
+                              <span className="text-sm text-white">{admin.email || admin.uid}</span>
+                              <button
+                                onClick={() => removeAdmin(admin.uid)}
+                                className="text-red-400 hover:text-red-300 text-sm"
+                              >
+                                ❌ Retirer
+                              </button>
+                            </div>
+                          ))}
+                          {admins.length === 0 && (
+                            <p className="text-gray-400 text-sm">Aucun admin enregistré.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Gestion des vendeurs */}
+                      <div className="neu-card p-6">
+                        <h3 className="text-lg font-semibold text-white mb-3">🏪 Gestion des vendeurs</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                          <input
+                            type="text"
+                            value={newVendorName}
+                            onChange={(e) => setNewVendorName(e.target.value)}
+                            placeholder="Nom du vendeur (ex: milo)"
+                            className="neu-input"
+                          />
+                          <input
+                            type="email"
+                            value={newVendorEmail}
+                            onChange={(e) => setNewVendorEmail(e.target.value)}
+                            placeholder="Email du vendeur"
+                            className="neu-input"
+                          />
+                        </div>
+                        <button
+                          onClick={addVendor}
+                          disabled={isAddingVendor}
+                          className="neu-button w-full mb-4"
+                        >
+                          {isAddingVendor ? '⏳ Ajout...' : '✅ Ajouter le vendeur'}
+                        </button>
+                        <div className="space-y-2">
+                          {vendors.map((v) => (
+                            <div key={v.name} className="flex justify-between items-center bg-slate-800/40 p-2 rounded-lg">
+                              <div>
+                                <span className="text-sm text-white font-medium">{v.name}</span>
+                                <span className="text-xs text-gray-400 ml-2">{v.email}</span>
+                              </div>
+                              <button
+                                onClick={() => removeVendor(v.name)}
+                                className="text-red-400 hover:text-red-300 text-sm"
+                              >
+                                ❌ Retirer
+                              </button>
+                            </div>
+                          ))}
+                          {vendors.length === 0 && (
+                            <p className="text-gray-400 text-sm">Aucun vendeur enregistré.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-          </div>
+          )}
 
-          <div className="neu-card p-6">
+          {/* ---- LOGS ---- */}
+          <div className="neu-card p-6 mt-6">
             <h2 className="text-xl font-semibold text-white mb-3">📋 Logs</h2>
             <div className="log-area" ref={logRef}>
               {logs.length === 0 ? (
