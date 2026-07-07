@@ -163,7 +163,7 @@
     const [newVendorName, setNewVendorName] = useState('');
     const [isAddingVendor, setIsAddingVendor] = useState(false);
 
-    // État pour stocker les identifiants admin (pour reconnexion)
+    // État pour stocker les identifiants admin (reconnexion)
     const [adminCredentials, setAdminCredentials] = useState(null);
 
     // ---- CONSTANTES ----
@@ -185,7 +185,6 @@
       var unsubscribe = auth.onAuthStateChanged(async function(user) {
         if (user) {
           setFirebaseUser(user);
-          // Stocker l'email de l'admin pour reconnexion automatique (sans mot de passe, on le demande)
           db.ref('admins').once('value').then(function(snapshot) {
             var adminList = snapshot.val() || [];
             if (Array.isArray(adminList) && adminList.includes(user.uid)) {
@@ -261,7 +260,7 @@
       try {
         await auth.signInWithEmailAndPassword(email, password);
         addLog(`✅ Connecté à Firebase`, 'success');
-        setAdminCredentials({ email, password }); // Stocker pour reconnexion auto
+        setAdminCredentials({ email, password });
       } catch (error) {
         addLog(`❌ Erreur connexion Firebase: ${error.message}`, 'error');
       }
@@ -642,7 +641,49 @@
       }
     };
 
-    // ---- FONCTION : CRÉER LE COMPTE VENDEUR (ou récupérer UID existant) ----
+    // ---- SUPPRIMER DE SHOPS.JSON ----
+    const removeFromShopsJson = async (vendorName) => {
+      try {
+        addLog(`📝 Suppression de ${vendorName} dans shops.json...`, 'info');
+        const shopsUrl = 'https://api.github.com/repos/mekeirish/sog/contents/shops.json';
+        const getRes = await fetch(shopsUrl, { headers: { Authorization: `token ${token}` } });
+        if (!getRes.ok) throw new Error('Impossible de récupérer shops.json');
+        const data = await getRes.json();
+        const decoded = atob(data.content);
+        const shops = JSON.parse(decoded);
+        const newShops = shops.filter(s => s.vendor !== vendorName);
+        if (newShops.length === shops.length) {
+          addLog(`ℹ️ ${vendorName} non trouvé dans shops.json`, 'info');
+          return true;
+        }
+        const content = btoa(unescape(encodeURIComponent(JSON.stringify(newShops, null, 2))));
+        const payload = {
+          message: `🗑️ Suppression de ${vendorName}`,
+          content: content,
+          sha: data.sha,
+          branch: 'main'
+        };
+        const putRes = await fetch(shopsUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `token ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!putRes.ok) {
+          const err = await putRes.json();
+          throw new Error(`Erreur ${putRes.status}: ${err.message}`);
+        }
+        addLog(`✅ ${vendorName} supprimé de shops.json`, 'success');
+        return true;
+      } catch (error) {
+        addLog(`❌ Erreur suppression shops.json: ${error.message}`, 'error');
+        return false;
+      }
+    };
+
+    // ---- FONCTION : CRÉER LE COMPTE VENDEUR ----
     const createVendorAccount = async (email, password) => {
       try {
         // 1. Vérifier si l'email existe déjà dans /users
@@ -651,27 +692,23 @@
         const userData = snapshot.val();
 
         if (userData) {
-          // L'utilisateur existe déjà
           const uid = Object.keys(userData)[0];
           addLog(`ℹ️ ${email} existe déjà (UID: ${uid})`, 'info');
           return uid;
         }
 
-        // 2. L'email n'existe pas → on crée le compte Firebase Auth
+        // 2. Créer le compte Firebase Auth
         if (!firebaseUser) {
           throw new Error('Tu dois être connecté à Firebase pour créer un compte vendeur.');
         }
 
-        // Sauvegarder les identifiants de l'admin avant de créer le nouveau compte
-        // On les a stockés dans adminCredentials (email + password) lors de la connexion
-        // Si on ne les a pas, on les demande
+        // Sauvegarder les identifiants admin
         let adminEmail = firebaseUser.email;
         let adminPassword = null;
         if (adminCredentials) {
           adminEmail = adminCredentials.email;
           adminPassword = adminCredentials.password;
         } else {
-          // On demande le mot de passe de l'admin
           adminPassword = prompt(`Entrez votre mot de passe admin (${firebaseUser.email}) pour continuer :`);
           if (!adminPassword) throw new Error('Mot de passe admin requis.');
           setAdminCredentials({ email: adminEmail, password: adminPassword });
@@ -682,7 +719,7 @@
         const vendorUid = userCredential.user.uid;
         addLog(`✅ Compte Firebase créé pour ${email} (UID: ${vendorUid})`, 'success');
 
-        // Ajouter l'utilisateur dans /users
+        // Ajouter dans /users
         await db.ref('users/' + vendorUid).set({
           email: email,
           name: vendor.trim(),
@@ -690,7 +727,7 @@
         });
         addLog(`✅ Profil ajouté dans /users`, 'success');
 
-        // Reconnecter l'admin après la création
+        // Reconnecter l'admin
         await auth.signInWithEmailAndPassword(adminEmail, adminPassword);
         addLog(`✅ Réauthentifié en tant qu'admin (${adminEmail})`, 'success');
 
@@ -698,8 +735,7 @@
 
       } catch (error) {
         if (error.code === 'auth/email-already-in-use') {
-          addLog(`⚠️ ${email} est déjà utilisé dans Firebase Auth. Recherche de l'UID...`, 'warning');
-          // Essayer de récupérer l'UID depuis /users
+          addLog(`⚠️ ${email} est déjà utilisé. Recherche de l'UID...`, 'warning');
           const snap = await db.ref('users').orderByChild('email').equalTo(email).once('value');
           const data = snap.val();
           if (data) {
@@ -717,7 +753,7 @@
       }
     };
 
-    // ---- CRÉATION D'UNE BOUTIQUE (avec création automatique du compte vendeur) ----
+    // ---- CRÉATION D'UNE BOUTIQUE ----
     const createShop = async () => {
       if (!vendor.trim()) {
         addLog('❌ Veuillez entrer un nom de boutique', 'error');
@@ -761,7 +797,7 @@
 
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // ----- Mise à jour de index.html -----
+        // Mise à jour index.html
         addLog(`📄 Récupération du template index.html...`, 'info');
         const templateData = await getFileContent(TEMPLATE_REPO, 'index.html');
         let templateContent = atob(templateData.content);
@@ -769,7 +805,7 @@
         await updateFile(repoName, 'index.html', newContent, `Initialisation index.html`);
         addLog(`✅ index.html mis à jour`, 'success');
 
-        // ----- Mise à jour de manifest.json -----
+        // Mise à jour manifest.json
         addLog(`📄 Récupération du template manifest.json...`, 'info');
         const manifestData = await getFileContent(TEMPLATE_REPO, 'manifest.json');
         let manifestContent = atob(manifestData.content);
@@ -777,7 +813,7 @@
         await updateFile(repoName, 'manifest.json', manifestContent, `Initialisation manifest.json`);
         addLog(`✅ manifest.json mis à jour`, 'success');
 
-        // ----- Mise à jour de sw.js -----
+        // Mise à jour sw.js
         addLog(`📄 Récupération du template sw.js...`, 'info');
         const swData = await getFileContent(TEMPLATE_REPO, 'sw.js');
         let swContent = atob(swData.content);
@@ -785,7 +821,7 @@
         await updateFile(repoName, 'sw.js', swContent, `Initialisation sw.js`);
         addLog(`✅ sw.js mis à jour`, 'success');
 
-        // ----- Création de don.json -----
+        // Création don.json
         addLog(`📦 Création de don.json...`, 'info');
         const defaultData = {
           settings: {
@@ -805,25 +841,24 @@
         );
         addLog(`✅ don.json créé`, 'success');
 
-        // ----- Activer GitHub Pages -----
+        // Activer GitHub Pages
         await enableGitHubPages(repoName);
         await waitForPagesDeployment(repoName);
 
-        // ----- Mettre à jour shops.json -----
+        // Mettre à jour shops.json
         await updateShopsJson(cleanVendor);
 
-        // ----- CRÉATION DU COMPTE VENDEUR -----
+        // Création du compte vendeur
         addLog(`🔐 Création du compte Firebase pour ${vendorEmail}...`, 'info');
         let vendorUid = null;
         try {
           vendorUid = await createVendorAccount(vendorEmail.trim(), vendorPassword.trim());
         } catch (error) {
           addLog(`❌ Erreur création compte: ${error.message}`, 'error');
-          // On continue quand même pour que la boutique soit créée (sans vendeur)
           vendorUid = null;
         }
 
-        // ----- ASSOCIATION DU VENDEUR -----
+        // Association du vendeur
         if (vendorUid) {
           await db.ref('vendors/' + cleanVendor).set({
             uid: vendorUid,
@@ -837,7 +872,7 @@
           addLog(`⚠️ ${cleanVendor} créé mais sans association vendeur.`, 'warning');
         }
 
-        // ----- Rafraîchir la liste -----
+        // Rafraîchir la liste
         await loadShops(token);
         setVendor('');
         setVendorEmail('');
@@ -847,10 +882,46 @@
         addLog(`🎉 Boutique ${repoName} créée !`, 'success');
         addLog(`🌐 ${pagesUrl}`, 'success');
 
-        // Si le vendeur a été créé, on affiche un récapitulatif
         if (vendorUid) {
           addLog(`📧 Identifiants vendeur : ${vendorEmail} / ${vendorPassword}`, 'info');
         }
+
+      } catch (error) {
+        addLog(`❌ Erreur: ${error.message}`, 'error');
+      }
+      setIsProcessing(false);
+    };
+
+    // ---- SUPPRESSION D'UNE BOUTIQUE ----
+    const deleteShop = async (repoName) => {
+      if (!confirm(`⚠️ Supprimer définitivement la boutique ${repoName} ?\n\nCela supprimera :\n- Le repo GitHub\n- L'entrée dans shops.json\n- Les commandes et données associées (si elles existent dans Firebase)`)) return;
+      if (!token) {
+        addLog('❌ Token GitHub requis', 'error');
+        return;
+      }
+
+      setIsProcessing(true);
+      const vendorName = repoName.replace('hanout-', '');
+
+      try {
+        // 1. Supprimer le repo GitHub
+        addLog(`🗑️ Suppression du repo ${repoName}...`, 'info');
+        const deleteRepoRes = await fetch(`https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}`, {
+          method: 'DELETE',
+          headers: { Authorization: `token ${token}` }
+        });
+        if (!deleteRepoRes.ok) {
+          const err = await deleteRepoRes.json();
+          throw new Error(`Erreur suppression repo: ${err.message}`);
+        }
+        addLog(`✅ Repo ${repoName} supprimé`, 'success');
+
+        // 2. Supprimer l'entrée dans shops.json
+        await removeFromShopsJson(vendorName);
+
+        // 3. Rafraîchir la liste
+        await loadShops(token);
+        addLog(`🔄 Liste des boutiques rafraîchie`, 'info');
 
       } catch (error) {
         addLog(`❌ Erreur: ${error.message}`, 'error');
@@ -869,7 +940,7 @@
       try {
         addLog(`🔄 Mise à jour de ${repoName}...`, 'info');
 
-        // ----- Mise à jour index.html -----
+        // Mise à jour index.html
         const templateRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/contents/index.html`,
           { headers: { Authorization: `token ${token}` } }
@@ -891,7 +962,7 @@
         await updateFile(repoName, 'index.html', newContent, `Mise à jour index.html`);
         addLog(`✅ index.html mis à jour`, 'success');
 
-        // ----- Mise à jour manifest.json -----
+        // Mise à jour manifest.json
         const manifestRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/contents/manifest.json`,
           { headers: { Authorization: `token ${token}` } }
@@ -906,7 +977,7 @@
           addLog(`⚠️ manifest.json non trouvé dans le template, ignoré`, 'warning');
         }
 
-        // ----- Mise à jour sw.js -----
+        // Mise à jour sw.js
         const swRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/contents/sw.js`,
           { headers: { Authorization: `token ${token}` } }
@@ -1009,7 +1080,7 @@
                 </p>
               </div>
 
-              {/* Créer une boutique (avec mot de passe vendeur) */}
+              {/* Créer une boutique */}
               <div className="neu-card p-6 mb-6">
                 <h2 className="text-xl font-semibold text-white mb-3">✨ Créer une boutique</h2>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1080,7 +1151,7 @@
                 </div>
               </div>
 
-              {/* Liste des boutiques */}
+              {/* Liste des boutiques (avec suppression) */}
               <div className="neu-card p-6 mb-6">
                 <h2 className="text-xl font-semibold text-white mb-3">📦 Boutiques existantes</h2>
                 <div className="flex flex-wrap gap-2">
@@ -1094,6 +1165,7 @@
                           onClick={() => updateShop(shop.name)}
                           disabled={isProcessing || !token}
                           className="text-xs text-blue-400 hover:text-blue-300"
+                          title="Mettre à jour"
                         >
                           🔄
                         </button>
@@ -1102,9 +1174,18 @@
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-xs text-emerald-400 hover:text-emerald-300"
+                          title="Ouvrir la boutique"
                         >
                           🌐
                         </a>
+                        <button
+                          onClick={() => deleteShop(shop.name)}
+                          disabled={isProcessing || !token}
+                          className="text-xs text-red-400 hover:text-red-300"
+                          title="Supprimer la boutique"
+                        >
+                          🗑️
+                        </button>
                       </div>
                     ))
                   )}
