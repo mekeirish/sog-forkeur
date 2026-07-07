@@ -143,6 +143,7 @@
     const [shops, setShops] = useState([]);
     const [vendor, setVendor] = useState('');
     const [vendorEmail, setVendorEmail] = useState('');
+    const [vendorPassword, setVendorPassword] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const logRef = useRef(null);
     
@@ -161,6 +162,9 @@
     const [newVendorEmail, setNewVendorEmail] = useState('');
     const [newVendorName, setNewVendorName] = useState('');
     const [isAddingVendor, setIsAddingVendor] = useState(false);
+
+    // État pour stocker les identifiants admin (pour reconnexion)
+    const [adminCredentials, setAdminCredentials] = useState(null);
 
     // ---- CONSTANTES ----
     const TEMPLATE_OWNER = 'mekeirish';
@@ -181,13 +185,14 @@
       var unsubscribe = auth.onAuthStateChanged(async function(user) {
         if (user) {
           setFirebaseUser(user);
+          // Stocker l'email de l'admin pour reconnexion automatique (sans mot de passe, on le demande)
           db.ref('admins').once('value').then(function(snapshot) {
             var adminList = snapshot.val() || [];
             if (Array.isArray(adminList) && adminList.includes(user.uid)) {
               setIsFirebaseAdmin(true);
               loadAdmins();
               loadVendors();
-              addLog(`✅ Authentifié en tant qu'admin Firebase`, 'success');
+              addLog(`✅ Authentifié en tant qu'admin Firebase (${user.email})`, 'success');
             } else {
               setIsFirebaseAdmin(false);
               addLog(`ℹ️ Connecté en tant que ${user.email} (pas admin)`, 'info');
@@ -256,6 +261,7 @@
       try {
         await auth.signInWithEmailAndPassword(email, password);
         addLog(`✅ Connecté à Firebase`, 'success');
+        setAdminCredentials({ email, password }); // Stocker pour reconnexion auto
       } catch (error) {
         addLog(`❌ Erreur connexion Firebase: ${error.message}`, 'error');
       }
@@ -264,6 +270,7 @@
 
     const handleFirebaseLogout = () => {
       auth.signOut();
+      setAdminCredentials(null);
       addLog(`🔓 Déconnecté de Firebase`, 'info');
     };
 
@@ -635,10 +642,10 @@
       }
     };
 
-    // ---- NOUVELLE FONCTION : TROUVER OU CRÉER UN VENDEUR ----
-    const getVendorUid = async (email) => {
+    // ---- FONCTION : CRÉER LE COMPTE VENDEUR (ou récupérer UID existant) ----
+    const createVendorAccount = async (email, password) => {
       try {
-        // 1. Chercher dans /users si l'email existe déjà
+        // 1. Vérifier si l'email existe déjà dans /users
         const usersRef = db.ref('users');
         const snapshot = await usersRef.orderByChild('email').equalTo(email).once('value');
         const userData = snapshot.val();
@@ -646,31 +653,78 @@
         if (userData) {
           // L'utilisateur existe déjà
           const uid = Object.keys(userData)[0];
-          addLog(`✅ Vendeur trouvé : ${email} (UID: ${uid})`, 'success');
+          addLog(`ℹ️ ${email} existe déjà (UID: ${uid})`, 'info');
           return uid;
         }
 
-        // 2. L'utilisateur n'existe pas dans /users
-        // On vérifie dans Firebase Auth directement (via l'API)
-        // Mais on ne peut pas lister les utilisateurs depuis le client.
-        // On demande donc au vendeur de se connecter une première fois à SOG.
-        addLog(`❌ Email ${email} non trouvé dans SOG. Le vendeur doit d'abord se connecter à SOG.`, 'error');
-        return null;
+        // 2. L'email n'existe pas → on crée le compte Firebase Auth
+        if (!firebaseUser) {
+          throw new Error('Tu dois être connecté à Firebase pour créer un compte vendeur.');
+        }
+
+        // Sauvegarder les identifiants de l'admin avant de créer le nouveau compte
+        // On les a stockés dans adminCredentials (email + password) lors de la connexion
+        // Si on ne les a pas, on les demande
+        let adminEmail = firebaseUser.email;
+        let adminPassword = null;
+        if (adminCredentials) {
+          adminEmail = adminCredentials.email;
+          adminPassword = adminCredentials.password;
+        } else {
+          // On demande le mot de passe de l'admin
+          adminPassword = prompt(`Entrez votre mot de passe admin (${firebaseUser.email}) pour continuer :`);
+          if (!adminPassword) throw new Error('Mot de passe admin requis.');
+          setAdminCredentials({ email: adminEmail, password: adminPassword });
+        }
+
+        // Créer le compte vendeur
+        const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+        const vendorUid = userCredential.user.uid;
+        addLog(`✅ Compte Firebase créé pour ${email} (UID: ${vendorUid})`, 'success');
+
+        // Ajouter l'utilisateur dans /users
+        await db.ref('users/' + vendorUid).set({
+          email: email,
+          name: vendor.trim(),
+          createdAt: new Date().toISOString()
+        });
+        addLog(`✅ Profil ajouté dans /users`, 'success');
+
+        // Reconnecter l'admin après la création
+        await auth.signInWithEmailAndPassword(adminEmail, adminPassword);
+        addLog(`✅ Réauthentifié en tant qu'admin (${adminEmail})`, 'success');
+
+        return vendorUid;
 
       } catch (error) {
-        addLog(`❌ Erreur recherche vendeur: ${error.message}`, 'error');
-        return null;
+        if (error.code === 'auth/email-already-in-use') {
+          addLog(`⚠️ ${email} est déjà utilisé dans Firebase Auth. Recherche de l'UID...`, 'warning');
+          // Essayer de récupérer l'UID depuis /users
+          const snap = await db.ref('users').orderByChild('email').equalTo(email).once('value');
+          const data = snap.val();
+          if (data) {
+            const uid = Object.keys(data)[0];
+            addLog(`✅ UID existant trouvé : ${uid}`, 'info');
+            return uid;
+          } else {
+            throw new Error('Email déjà utilisé, mais impossible de récupérer l\'UID.');
+          }
+        } else if (error.code === 'auth/weak-password') {
+          throw new Error('Le mot de passe doit contenir au moins 6 caractères.');
+        } else {
+          throw error;
+        }
       }
     };
 
-    // ---- CRÉATION D'UNE BOUTIQUE (AVEC ASSOCIATION DIRECTE) ----
+    // ---- CRÉATION D'UNE BOUTIQUE (avec création automatique du compte vendeur) ----
     const createShop = async () => {
       if (!vendor.trim()) {
         addLog('❌ Veuillez entrer un nom de boutique', 'error');
         return;
       }
-      if (!vendorEmail.trim()) {
-        addLog('❌ Veuillez entrer l\'email du vendeur', 'error');
+      if (!vendorEmail.trim() || !vendorPassword.trim()) {
+        addLog('❌ Veuillez entrer l\'email ET le mot de passe du vendeur', 'error');
         return;
       }
       if (!token) {
@@ -758,10 +812,18 @@
         // ----- Mettre à jour shops.json -----
         await updateShopsJson(cleanVendor);
 
-        // ----- Associer le vendeur -----
-        addLog(`🔗 Recherche du vendeur ${vendorEmail}...`, 'info');
-        const vendorUid = await getVendorUid(vendorEmail.trim());
-        
+        // ----- CRÉATION DU COMPTE VENDEUR -----
+        addLog(`🔐 Création du compte Firebase pour ${vendorEmail}...`, 'info');
+        let vendorUid = null;
+        try {
+          vendorUid = await createVendorAccount(vendorEmail.trim(), vendorPassword.trim());
+        } catch (error) {
+          addLog(`❌ Erreur création compte: ${error.message}`, 'error');
+          // On continue quand même pour que la boutique soit créée (sans vendeur)
+          vendorUid = null;
+        }
+
+        // ----- ASSOCIATION DU VENDEUR -----
         if (vendorUid) {
           await db.ref('vendors/' + cleanVendor).set({
             uid: vendorUid,
@@ -769,20 +831,26 @@
             email: vendorEmail.trim(),
             createdAt: new Date().toISOString()
           });
-          addLog(`✅ ${cleanVendor} associé à ${vendorEmail.trim()}`, 'success');
+          addLog(`✅ ${cleanVendor} associé à ${vendorEmail}`, 'success');
           loadVendors();
         } else {
-          addLog(`⚠️ ${cleanVendor} créé mais sans association vendeur. Le vendeur doit se connecter à SOG.`, 'warning');
+          addLog(`⚠️ ${cleanVendor} créé mais sans association vendeur.`, 'warning');
         }
 
         // ----- Rafraîchir la liste -----
         await loadShops(token);
         setVendor('');
         setVendorEmail('');
+        setVendorPassword('');
 
         const pagesUrl = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
         addLog(`🎉 Boutique ${repoName} créée !`, 'success');
         addLog(`🌐 ${pagesUrl}`, 'success');
+
+        // Si le vendeur a été créé, on affiche un récapitulatif
+        if (vendorUid) {
+          addLog(`📧 Identifiants vendeur : ${vendorEmail} / ${vendorPassword}`, 'info');
+        }
 
       } catch (error) {
         addLog(`❌ Erreur: ${error.message}`, 'error');
@@ -941,10 +1009,10 @@
                 </p>
               </div>
 
-              {/* Créer une boutique (nouveau formulaire) */}
+              {/* Créer une boutique (avec mot de passe vendeur) */}
               <div className="neu-card p-6 mb-6">
                 <h2 className="text-xl font-semibold text-white mb-3">✨ Créer une boutique</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="text-sm text-gray-400 block mb-1">Nom de la boutique</label>
                     <input
@@ -967,6 +1035,17 @@
                       disabled={isProcessing}
                     />
                   </div>
+                  <div>
+                    <label className="text-sm text-gray-400 block mb-1">Mot de passe du vendeur</label>
+                    <input
+                      type="password"
+                      value={vendorPassword}
+                      onChange={(e) => setVendorPassword(e.target.value)}
+                      placeholder="Mot de passe (min 6 car.)"
+                      className="neu-input"
+                      disabled={isProcessing}
+                    />
+                  </div>
                 </div>
                 <button
                   onClick={createShop}
@@ -976,7 +1055,7 @@
                   {isProcessing ? '⏳ Création...' : '🚀 Créer la boutique'}
                 </button>
                 <p className="text-xs text-gray-400 mt-2">
-                  Le vendeur doit d'abord se connecter à SOG avec cet email pour que l'association fonctionne.
+                  Le compte vendeur sera créé automatiquement dans Firebase.
                 </p>
               </div>
 
