@@ -148,14 +148,14 @@
     // États Firebase Auth
     const [firebaseUser, setFirebaseUser] = useState(null);
     const [isFirebaseAdmin, setIsFirebaseAdmin] = useState(false);
-    const [activeTab, setActiveTab] = useState('forkeur'); // 'forkeur' | 'admin'
+    const [activeTab, setActiveTab] = useState('forkeur');
     
     // États gestion admins
     const [admins, setAdmins] = useState([]);
     const [newAdminEmail, setNewAdminEmail] = useState('');
     const [isAddingAdmin, setIsAddingAdmin] = useState(false);
     
-    // États gestion vendeurs (dans Forkeur)
+    // États gestion vendeurs
     const [vendors, setVendors] = useState([]);
     const [newVendorEmail, setNewVendorEmail] = useState('');
     const [newVendorName, setNewVendorName] = useState('');
@@ -180,7 +180,6 @@
       var unsubscribe = auth.onAuthStateChanged(async function(user) {
         if (user) {
           setFirebaseUser(user);
-          // Vérifier si l'utilisateur est admin
           db.ref('admins').once('value').then(function(snapshot) {
             var adminList = snapshot.val() || [];
             if (Array.isArray(adminList) && adminList.includes(user.uid)) {
@@ -272,12 +271,10 @@
       db.ref('admins').on('value', function(snapshot) {
         var data = snapshot.val() || [];
         if (Array.isArray(data)) {
-          // Récupérer les emails des admins
           var adminList = data.map(function(uid) {
             return { uid: uid, email: 'Chargement...' };
           });
           setAdmins(adminList);
-          // Charger les emails
           adminList.forEach(function(admin, index) {
             if (admin.uid) {
               db.ref('users/' + admin.uid + '/email').once('value').then(function(snap) {
@@ -305,7 +302,6 @@
       }
       setIsAddingAdmin(true);
       try {
-        // Chercher l'uid de l'utilisateur
         var usersRef = db.ref('users');
         var snapshot = await usersRef.once('value');
         var users = snapshot.val() || {};
@@ -321,7 +317,6 @@
           setIsAddingAdmin(false);
           return;
         }
-        // Ajouter à la liste des admins
         var adminsRef = db.ref('admins');
         var currentAdmins = await adminsRef.once('value');
         var adminList = currentAdmins.val() || [];
@@ -375,7 +370,6 @@
       }
       setIsAddingVendor(true);
       try {
-        // Chercher l'uid de l'utilisateur
         var usersRef = db.ref('users');
         var snapshot = await usersRef.once('value');
         var users = snapshot.val() || {};
@@ -640,7 +634,7 @@
       }
     };
 
-    // ---- CRÉATION D'UNE BOUTIQUE ----
+    // ---- CRÉATION D'UNE BOUTIQUE (AVEC MANIFEST & SW) ----
     const createShop = async () => {
       if (!vendor.trim()) {
         addLog('❌ Veuillez entrer un nom de vendeur', 'error');
@@ -680,15 +674,31 @@
 
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        addLog(`📄 Récupération du template...`, 'info');
+        // ----- Mise à jour de index.html -----
+        addLog(`📄 Récupération du template index.html...`, 'info');
         const templateData = await getFileContent(TEMPLATE_REPO, 'index.html');
         let templateContent = atob(templateData.content);
         let newContent = templateContent.replace(/{{VENDOR}}/g, cleanVendor);
-
-        addLog(`💾 Sauvegarde de index.html...`, 'info');
-        await updateFile(repoName, 'index.html', newContent, `Initialisation de ${repoName}`);
+        await updateFile(repoName, 'index.html', newContent, `Initialisation index.html`);
         addLog(`✅ index.html mis à jour`, 'success');
 
+        // ----- Mise à jour de manifest.json -----
+        addLog(`📄 Récupération du template manifest.json...`, 'info');
+        const manifestData = await getFileContent(TEMPLATE_REPO, 'manifest.json');
+        let manifestContent = atob(manifestData.content);
+        manifestContent = manifestContent.replace(/{{VENDOR}}/g, cleanVendor);
+        await updateFile(repoName, 'manifest.json', manifestContent, `Initialisation manifest.json`);
+        addLog(`✅ manifest.json mis à jour`, 'success');
+
+        // ----- Mise à jour de sw.js -----
+        addLog(`📄 Récupération du template sw.js...`, 'info');
+        const swData = await getFileContent(TEMPLATE_REPO, 'sw.js');
+        let swContent = atob(swData.content);
+        swContent = swContent.replace(/{{VENDOR}}/g, cleanVendor);
+        await updateFile(repoName, 'sw.js', swContent, `Initialisation sw.js`);
+        addLog(`✅ sw.js mis à jour`, 'success');
+
+        // ----- Création de don.json -----
         addLog(`📦 Création de don.json...`, 'info');
         const defaultData = {
           settings: {
@@ -708,9 +718,14 @@
         );
         addLog(`✅ don.json créé`, 'success');
 
+        // ----- Activer GitHub Pages -----
         await enableGitHubPages(repoName);
         await waitForPagesDeployment(repoName);
+
+        // ----- Mettre à jour shops.json -----
         await updateShopsJson(cleanVendor);
+
+        // ----- Rafraîchir la liste -----
         await loadShops(token);
         setVendor('');
 
@@ -718,7 +733,7 @@
         addLog(`🎉 Boutique ${repoName} créée !`, 'success');
         addLog(`🌐 ${pagesUrl}`, 'success');
 
-        // Ajouter automatiquement le vendeur si on est connecté à Firebase
+        // ----- Associer automatiquement le vendeur (si admin Firebase connecté) -----
         if (firebaseUser && isFirebaseAdmin) {
           addLog(`🔗 Ajout automatique du vendeur ${cleanVendor}...`, 'info');
           try {
@@ -742,7 +757,7 @@
       setIsProcessing(false);
     };
 
-    // ---- MISE À JOUR D'UNE BOUTIQUE ----
+    // ---- MISE À JOUR INDIVIDUELLE (avec remplacement des fichiers) ----
     const updateShop = async (repoName) => {
       if (!token) {
         addLog('❌ Token requis', 'error');
@@ -752,6 +767,8 @@
       const vendorName = repoName.replace('hanout-', '');
       try {
         addLog(`🔄 Mise à jour de ${repoName}...`, 'info');
+
+        // ----- Mise à jour index.html -----
         const templateRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/contents/index.html`,
           { headers: { Authorization: `token ${token}` } }
@@ -759,6 +776,7 @@
         if (!templateRes.ok) throw new Error('Impossible de récupérer le template');
         const templateData = await templateRes.json();
         let templateContent = atob(templateData.content);
+        // Récupérer le vendor actuel depuis l'index.html du repo
         const shopRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
           { headers: { Authorization: `token ${token}` } }
@@ -768,10 +786,45 @@
         const currentContent = atob(shopData.content);
         const vendorMatch = currentContent.match(/var VENDOR = "([^"]+)";/);
         const currentVendor = vendorMatch ? vendorMatch[1] : vendorName;
+
         let newContent = templateContent.replace(/{{VENDOR}}/g, currentVendor);
-        await updateFile(repoName, 'index.html', newContent, `Mise à jour de ${repoName}`);
-        addLog(`✅ ${repoName} mis à jour.`, 'success');
+        await updateFile(repoName, 'index.html', newContent, `Mise à jour index.html`);
+        addLog(`✅ index.html mis à jour`, 'success');
+
+        // ----- Mise à jour manifest.json -----
+        const manifestRes = await fetch(
+          `https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/contents/manifest.json`,
+          { headers: { Authorization: `token ${token}` } }
+        );
+        if (manifestRes.ok) {
+          const manifestData = await manifestRes.json();
+          let manifestContent = atob(manifestData.content);
+          manifestContent = manifestContent.replace(/{{VENDOR}}/g, currentVendor);
+          await updateFile(repoName, 'manifest.json', manifestContent, `Mise à jour manifest.json`);
+          addLog(`✅ manifest.json mis à jour`, 'success');
+        } else {
+          addLog(`⚠️ manifest.json non trouvé dans le template, ignoré`, 'warning');
+        }
+
+        // ----- Mise à jour sw.js -----
+        const swRes = await fetch(
+          `https://api.github.com/repos/${TEMPLATE_OWNER}/${TEMPLATE_REPO}/contents/sw.js`,
+          { headers: { Authorization: `token ${token}` } }
+        );
+        if (swRes.ok) {
+          const swData = await swRes.json();
+          let swContent = atob(swData.content);
+          swContent = swContent.replace(/{{VENDOR}}/g, currentVendor);
+          await updateFile(repoName, 'sw.js', swContent, `Mise à jour sw.js`);
+          addLog(`✅ sw.js mis à jour`, 'success');
+        } else {
+          addLog(`⚠️ sw.js non trouvé dans le template, ignoré`, 'warning');
+        }
+
+        // Mettre à jour shops.json
         await updateShopsJson(currentVendor);
+        addLog(`✅ ${repoName} mis à jour.`, 'success');
+
       } catch (error) {
         addLog(`❌ Erreur ${repoName}: ${error.message}`, 'error');
       }
