@@ -142,6 +142,7 @@
     const [logs, setLogs] = useState([]);
     const [shops, setShops] = useState([]);
     const [vendor, setVendor] = useState('');
+    const [vendorEmail, setVendorEmail] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const logRef = useRef(null);
     
@@ -634,10 +635,42 @@
       }
     };
 
-    // ---- CRÉATION D'UNE BOUTIQUE (AVEC MANIFEST & SW) ----
+    // ---- NOUVELLE FONCTION : TROUVER OU CRÉER UN VENDEUR ----
+    const getVendorUid = async (email) => {
+      try {
+        // 1. Chercher dans /users si l'email existe déjà
+        const usersRef = db.ref('users');
+        const snapshot = await usersRef.orderByChild('email').equalTo(email).once('value');
+        const userData = snapshot.val();
+
+        if (userData) {
+          // L'utilisateur existe déjà
+          const uid = Object.keys(userData)[0];
+          addLog(`✅ Vendeur trouvé : ${email} (UID: ${uid})`, 'success');
+          return uid;
+        }
+
+        // 2. L'utilisateur n'existe pas dans /users
+        // On vérifie dans Firebase Auth directement (via l'API)
+        // Mais on ne peut pas lister les utilisateurs depuis le client.
+        // On demande donc au vendeur de se connecter une première fois à SOG.
+        addLog(`❌ Email ${email} non trouvé dans SOG. Le vendeur doit d'abord se connecter à SOG.`, 'error');
+        return null;
+
+      } catch (error) {
+        addLog(`❌ Erreur recherche vendeur: ${error.message}`, 'error');
+        return null;
+      }
+    };
+
+    // ---- CRÉATION D'UNE BOUTIQUE (AVEC ASSOCIATION DIRECTE) ----
     const createShop = async () => {
       if (!vendor.trim()) {
-        addLog('❌ Veuillez entrer un nom de vendeur', 'error');
+        addLog('❌ Veuillez entrer un nom de boutique', 'error');
+        return;
+      }
+      if (!vendorEmail.trim()) {
+        addLog('❌ Veuillez entrer l\'email du vendeur', 'error');
         return;
       }
       if (!token) {
@@ -725,31 +758,31 @@
         // ----- Mettre à jour shops.json -----
         await updateShopsJson(cleanVendor);
 
+        // ----- Associer le vendeur -----
+        addLog(`🔗 Recherche du vendeur ${vendorEmail}...`, 'info');
+        const vendorUid = await getVendorUid(vendorEmail.trim());
+        
+        if (vendorUid) {
+          await db.ref('vendors/' + cleanVendor).set({
+            uid: vendorUid,
+            name: cleanVendor,
+            email: vendorEmail.trim(),
+            createdAt: new Date().toISOString()
+          });
+          addLog(`✅ ${cleanVendor} associé à ${vendorEmail.trim()}`, 'success');
+          loadVendors();
+        } else {
+          addLog(`⚠️ ${cleanVendor} créé mais sans association vendeur. Le vendeur doit se connecter à SOG.`, 'warning');
+        }
+
         // ----- Rafraîchir la liste -----
         await loadShops(token);
         setVendor('');
+        setVendorEmail('');
 
         const pagesUrl = `https://${TEMPLATE_OWNER}.github.io/${repoName}/`;
         addLog(`🎉 Boutique ${repoName} créée !`, 'success');
         addLog(`🌐 ${pagesUrl}`, 'success');
-
-        // ----- Associer automatiquement le vendeur (si admin Firebase connecté) -----
-        if (firebaseUser && isFirebaseAdmin) {
-          addLog(`🔗 Ajout automatique du vendeur ${cleanVendor}...`, 'info');
-          try {
-            const vendorRef = db.ref('vendors/' + cleanVendor);
-            await vendorRef.set({
-              uid: firebaseUser.uid,
-              name: cleanVendor,
-              email: firebaseUser.email,
-              createdAt: new Date().toISOString()
-            });
-            addLog(`✅ ${cleanVendor} associé à ${firebaseUser.email}`, 'success');
-            loadVendors();
-          } catch (err) {
-            addLog(`⚠️ Erreur association vendeur: ${err.message}`, 'warning');
-          }
-        }
 
       } catch (error) {
         addLog(`❌ Erreur: ${error.message}`, 'error');
@@ -757,7 +790,7 @@
       setIsProcessing(false);
     };
 
-    // ---- MISE À JOUR INDIVIDUELLE (avec remplacement des fichiers) ----
+    // ---- MISE À JOUR INDIVIDUELLE ----
     const updateShop = async (repoName) => {
       if (!token) {
         addLog('❌ Token requis', 'error');
@@ -776,7 +809,6 @@
         if (!templateRes.ok) throw new Error('Impossible de récupérer le template');
         const templateData = await templateRes.json();
         let templateContent = atob(templateData.content);
-        // Récupérer le vendor actuel depuis l'index.html du repo
         const shopRes = await fetch(
           `https://api.github.com/repos/${TEMPLATE_OWNER}/${repoName}/contents/index.html`,
           { headers: { Authorization: `token ${token}` } }
@@ -909,17 +941,28 @@
                 </p>
               </div>
 
-              {/* Créer une boutique */}
+              {/* Créer une boutique (nouveau formulaire) */}
               <div className="neu-card p-6 mb-6">
                 <h2 className="text-xl font-semibold text-white mb-3">✨ Créer une boutique</h2>
-                <div className="grid grid-cols-1 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="text-sm text-gray-400 block mb-1">Nom du vendeur</label>
+                    <label className="text-sm text-gray-400 block mb-1">Nom de la boutique</label>
                     <input
                       type="text"
                       value={vendor}
                       onChange={(e) => setVendor(e.target.value)}
-                      placeholder="ex: gomaziz"
+                      placeholder="ex: milo"
+                      className="neu-input"
+                      disabled={isProcessing}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-400 block mb-1">Email du vendeur</label>
+                    <input
+                      type="email"
+                      value={vendorEmail}
+                      onChange={(e) => setVendorEmail(e.target.value)}
+                      placeholder="vendeur@email.com"
                       className="neu-input"
                       disabled={isProcessing}
                     />
@@ -932,11 +975,9 @@
                 >
                   {isProcessing ? '⏳ Création...' : '🚀 Créer la boutique'}
                 </button>
-                {firebaseUser && isFirebaseAdmin && (
-                  <p className="text-xs text-emerald-400 mt-2">
-                    ✅ Tu es connecté à Firebase, le vendeur sera automatiquement associé.
-                  </p>
-                )}
+                <p className="text-xs text-gray-400 mt-2">
+                  Le vendeur doit d'abord se connecter à SOG avec cet email pour que l'association fonctionne.
+                </p>
               </div>
 
               {/* Actions */}
